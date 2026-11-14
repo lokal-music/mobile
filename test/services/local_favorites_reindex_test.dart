@@ -84,6 +84,39 @@ void main() {
     expect(await reopened.getFavoriteIds(), {'3'});
   });
 
+  test('overlapping recycled IDs never merge unrelated local likes',
+      () async {
+    final library = _Library([
+      _local('1', '/music/a.flac'),
+      _local('2', '/music/b.flac'),
+    ]);
+    final initial = FavoritesService(songRepository: library);
+    for (final song in library.songs) {
+      await initial.addFavorite(song.id, song: song);
+    }
+    final before = await initial.getFavoriteRanks();
+
+    // First scan page gives A the old ID belonging to B. B is absent.
+    library.songs = [_local('2', '/music/a.flac')];
+    final partial = FavoritesService(songRepository: library);
+    expect((await partial.getFavorites()).map((song) => song.filePath).toSet(),
+        {'/music/a.flac', '/music/b.flac'});
+    expect(await partial.getFavoriteIds(), {'1', '2'});
+
+    // Later B receives a fresh ID; both hearts can move atomically.
+    library.songs = [
+      _local('2', '/music/a.flac'),
+      _local('3', '/music/b.flac'),
+    ];
+    final complete = FavoritesService(songRepository: library);
+    expect((await complete.getFavorites()).map((song) => song.id).toSet(),
+        {'2', '3'});
+    expect(await complete.getFavoriteIds(), {'2', '3'});
+    final after = await complete.getFavoriteRanks();
+    expect(after['2'], before['1']);
+    expect(after['3'], before['2']);
+  });
+
   test('CUE segments do not steal one another\'s likes after rescan',
       () async {
     final library = _Library([
