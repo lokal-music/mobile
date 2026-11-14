@@ -17,6 +17,7 @@ import 'cast_handoff.dart';
 import 'cast_source.dart';
 import 'cast_local_file.dart';
 import 'cast_receiver_presentation.dart';
+import 'cast_receiver_transport.dart';
 import '../lyrics_service.dart';
 
 // ponytail: orchestrates DLNA + Chromecast backends; drives PlayerService notifiers
@@ -75,6 +76,7 @@ class CastingService {
   StreamSubscription<Map<String, dynamic>>? _ccEventsSub;
   bool _wasPlayingBeforeCast = false;
   bool _tearingDown = false;
+  bool _receiverSkipInFlight = false;
 
   bool get isActive => _activeDevice != null;
   CastDevice? get activeDevice => _activeDevice;
@@ -221,6 +223,7 @@ class CastingService {
     _presentationRevision++;
     _activeDevice = null;
     _currentSong = null;
+    _receiverSkipInFlight = false;
     activeDeviceNotifier.value = null;
     isActiveNotifier.value = false;
     remoteVolumeNotifier.value = null;
@@ -706,6 +709,9 @@ class CastingService {
                   data['type'] == 'hello' &&
                   _currentSong != null)
                 unawaited(_presentReceiverSong(_currentSong!));
+              if (data is Map && data['type'] == 'transport') {
+                _onReceiverTransport(data);
+              }
               if (data is Map &&
                   data['type'] == 'view' &&
                   const [
@@ -751,6 +757,47 @@ class CastingService {
       onError: (_) {},
       onDone: () => _ccEventsSub = null,
     );
+  }
+
+  /// Native Android and iOS share this receiver namespace and queue owner.
+  /// CAF has only the active recording on mobile; next/previous must travel
+  /// back to PlayerService instead of seeking the current media item to zero.
+  void _onReceiverTransport(Map<dynamic, dynamic> message) {
+    if (_activeDevice?.backend != CastBackend.chromecast ||
+        _tearingDown ||
+        isChangingOutputNotifier.value ||
+        _pendingCastLoadId != null ||
+        _receiverSkipInFlight) {
+      return;
+    }
+    final action = castReceiverTransport(
+      message,
+      currentTrackId: _currentSong?.id,
+      currentLoadId: currentCastLoadId,
+    );
+    if (action == null ||
+        PlayerService().currentSongNotifier.value?.id != _currentSong?.id) {
+      return;
+    }
+    _receiverSkipInFlight = true;
+    final device = _activeDevice;
+    unawaited(() async {
+      try {
+        if (action == CastReceiverTransport.next) {
+          await PlayerService().next();
+        } else {
+          // Receiver Previous is a track-navigation command, unlike the
+          // phone's Previous button which intentionally restarts after 3s.
+          await PlayerService().previous(allowRestart: false);
+        }
+      } catch (error) {
+        if (identical(device, _activeDevice)) {
+          errorNotifier.value = 'Could not change songs on the receiver. Try again.';
+        }
+      } finally {
+        _receiverSkipInFlight = false;
+      }
+    }());
   }
 
   void _handleCcStatus(Map<String, dynamic> e) {
