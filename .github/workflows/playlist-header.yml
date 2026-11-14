@@ -8,6 +8,7 @@ on:
       - 'lib/services/favorites_service.dart'
       - 'lib/features/playlist_links/playlist_unmatched_downloader.dart'
       - 'test/konnekted/collection_download*test.dart'
+      - 'test/services/local_favorites_reindex_test.dart'
       - 'lib/features/konnekted/library/lokal_library_kit.dart'
       - 'lib/features/konnekted/library/lokal_playlists.dart'
       - 'lib/features/konnekted/library/lokal_song_browser.dart'
@@ -40,6 +41,7 @@ jobs:
           flutter analyze --no-pub --no-fatal-infos --no-fatal-warnings
           lib/features/konnekted/library/collection_downloads.dart
           lib/features/konnekted/library/collection_download_dialog.dart
+          lib/services/favorites_service.dart
           lib/features/konnekted/library/lokal_library_kit.dart
           lib/features/konnekted/library/playlist_hero_header.dart
           lib/features/spotify/provider_playlist_track_browser.dart
@@ -52,6 +54,7 @@ jobs:
           test/konnekted/collection_download_actions_test.dart
           test/playlist_links/playlist_unmatched_downloader_test.dart
           test/services/online_favorites_test.dart
+          test/services/local_favorites_reindex_test.dart
           test/konnekted/playlist_header_layout_test.dart
           test/konnekted/playlist_hero_header_test.dart
           test/widgets/provider_playlist_track_browser_test.dart
