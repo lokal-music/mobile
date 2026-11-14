@@ -110,23 +110,47 @@ class FavoritesService {
         redirects[id] = candidates.single.id;
       }
     }
+    // A partially scanned library can reassign an old liked ID to a
+    // different liked file before that second file has been scanned. Delay
+    // conflicting moves rather than collapsing two distinct hearts into one.
+    // Repeat until no target remains occupied by an unmoved liked identity.
+    while (true) {
+      final blocked = [
+        for (final entry in redirects.entries)
+          if (_favoriteIds.contains(entry.value) &&
+              !redirects.containsKey(entry.value))
+            entry.key,
+      ];
+      if (blocked.isEmpty) break;
+      for (final id in blocked) {
+        redirects.remove(id);
+      }
+    }
     if (redirects.isEmpty) return;
 
-    final ranks = await getFavoriteRanks();
-    for (final entry in redirects.entries) {
-      final oldRank = ranks.remove(entry.key);
-      final currentRank = ranks[entry.value];
-      if (oldRank != null &&
-          (currentRank == null || oldRank < currentRank)) {
-        ranks[entry.value] = oldRank;
+    // Compute against the *original* snapshot: reindexed IDs can overlap
+    // (1 -> 2, 2 -> 3), and sequential map mutations corrupt chronology.
+    final originalRanks = await getFavoriteRanks();
+    final ranks = <String, int>{};
+    for (final id in _favoriteIds) {
+      final target = redirects[id] ?? id;
+      final rank = originalRanks[id];
+      final existing = ranks[target];
+      if (rank != null && (existing == null || rank < existing)) {
+        ranks[target] = rank;
       }
-      known.remove(entry.key);
-      known[entry.value] = _capture(byId[entry.value]!);
+    }
+    final updatedMetadata = Map<String, dynamic>.from(known);
+    for (final id in redirects.keys) {
+      updatedMetadata.remove(id);
+    }
+    for (final entry in redirects.entries) {
+      updatedMetadata[entry.value] = _capture(byId[entry.value]!);
     }
     _favoriteIds = {
       for (final id in _favoriteIds) redirects[id] ?? id,
     };
-    await prefs.setString(_onlineMetadataKey, jsonEncode(known));
+    await prefs.setString(_onlineMetadataKey, jsonEncode(updatedMetadata));
     await prefs.setString(_likedOrderKey, jsonEncode(ranks));
     // The link baseline is an ID projection, not a remote unlike operation.
     final baseline = prefs.getStringList('lokal.link.favorites_snapshot');
