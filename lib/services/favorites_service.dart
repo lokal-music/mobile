@@ -17,16 +17,16 @@ abstract interface class RemoteFavoritesDelegate {
 class FavoritesService {
   static RemoteFavoritesDelegate? remoteDelegate;
   static const String _favoritesKey = 'favorite_song_ids';
+  // Retain this key for backward compatibility; it now stores local snapshots too.
   static const String _onlineMetadataKey = 'favorite_online_song_metadata_v1';
   static const String _likedOrderKey = 'favorite_song_liked_order_v1';
-
-  static bool _onlineSong(Song song) => song.isPending ||
-      song.isExternal || song.isNetworkSource || (song.sourcePackage?.startsWith('konnekted.') ?? false);
 
   static Map<String, Object?> _capture(Song song) => {
     'id': song.id, 'title': song.title, 'artist': song.artist,
     'album': song.album, 'albumArt': song.albumArt,
     'durationMs': song.duration.inMilliseconds, 'codec': song.fileType,
+    'startOffsetMs': song.startOffsetMs, 'endOffsetMs': song.endOffsetMs,
+    'isExternal': song.isExternal,
     'resolution': song.resolution, 'sampleRate': song.sampleRate,
     'bitDepth': song.bitDepth, 'filePath': song.filePath,
     'sourcePackage': song.sourcePackage, 'sourceType': song.sourceType,
@@ -37,29 +37,105 @@ class FavoritesService {
     'remoteServerId': song.remoteServerId,
   };
 
-  /// Preserve metadata for online songs, which are never inserted into
-  /// SongRepository merely because they were streamed. Saving only their
-  /// IDs made them invisible on the Liked library screen.
-  Future<void> _rememberOnline(Song song) async {
-    if (!_onlineSong(song)) return;
+  /// Keep a durable display snapshot and exact local-file identity for every
+  /// heart. Local Isar IDs can be reassigned after a library rescan; saving
+  /// IDs alone made those likes disappear even though the IDs were persisted.
+  /// Reuse the original online metadata key to preserve existing installs.
+  Future<void> _rememberSong(Song song) async {
     final prefs = await SharedPreferences.getInstance();
-    Map<String, dynamic> known = {};
-    try {
-      known = jsonDecode(prefs.getString(_onlineMetadataKey) ?? '{}') as Map<String, dynamic>;
-    } catch (_) {}
+    final known = _savedMetadata(prefs);
     known[song.id] = _capture(song);
     await prefs.setString(_onlineMetadataKey, jsonEncode(known));
   }
 
-  Future<void> _forgetOnline(String id) async {
-    final prefs = await SharedPreferences.getInstance();
-    Map<String, dynamic> known = {};
+  static Map<String, dynamic> _savedMetadata(SharedPreferences prefs) {
     try {
-      known = jsonDecode(prefs.getString(_onlineMetadataKey) ?? '{}') as Map<String, dynamic>;
-    } catch (_) {}
+      final raw = jsonDecode(prefs.getString(_onlineMetadataKey) ?? '{}');
+      if (raw is Map<String, dynamic>) return raw;
+    } catch (_) {
+      // Corrupt snapshots must not affect the persisted liked-ID set.
+    }
+    return {};
+  }
+
+  Future<void> _forgetSong(String id) async {
+    final prefs = await SharedPreferences.getInstance();
+    final known = _savedMetadata(prefs);
     if (known.remove(id) != null) {
       await prefs.setString(_onlineMetadataKey, jsonEncode(known));
     }
+  }
+
+  /// A remembered local recording has an exact path and CUE segment; titles,
+  /// artists and durations alone are not strong enough to move a heart.
+  static bool _sameLocalRecording(Song song, Object? raw) {
+    if (raw is! Map || raw['isExternal'] != false ||
+        raw['sourceType'] != null || raw['filePath'] is! String) {
+      return true; // Legacy online snapshots have no local identity.
+    }
+    return song.filePath == raw['filePath'] &&
+        song.startOffsetMs == raw['startOffsetMs'] &&
+        song.endOffsetMs == raw['endOffsetMs'];
+  }
+
+  /// Reassociate a liked local file when a scan deletes/recreates its Isar
+  /// row. Do not take a now-reused numeric ID as proof that it's the same file.
+  /// Missing/unmounted files keep their saved IDs and display snapshots.
+  Future<void> _repairLocalIds(List<Song> library) async {
+    final prefs = await SharedPreferences.getInstance();
+    final known = _savedMetadata(prefs);
+    if (known.isEmpty || _favoriteIds.isEmpty) return;
+
+    final byPath = <String, List<Song>>{};
+    final byId = {for (final song in library) song.id: song};
+    for (final song in library) {
+      if (song.isExternal || song.isNetworkSource ||
+          song.filePath == null || song.filePath!.isEmpty) continue;
+      (byPath[song.filePath!] ??= <Song>[]).add(song);
+    }
+    final redirects = <String, String>{};
+    for (final id in _favoriteIds) {
+      final snapshot = known[id];
+      if (snapshot is! Map || snapshot['isExternal'] != false ||
+          snapshot['sourceType'] != null ||
+          snapshot['filePath'] is! String) continue;
+      if (byId[id] != null && _sameLocalRecording(byId[id]!, snapshot)) {
+        continue;
+      }
+      final candidates = (byPath[snapshot['filePath']] ?? const <Song>[])
+          .where((song) => _sameLocalRecording(song, snapshot))
+          .toList();
+      // Ambiguous path/segment matches must not silently change a like.
+      if (candidates.length == 1 && candidates.single.id != id) {
+        redirects[id] = candidates.single.id;
+      }
+    }
+    if (redirects.isEmpty) return;
+
+    final ranks = await getFavoriteRanks();
+    for (final entry in redirects.entries) {
+      final oldRank = ranks.remove(entry.key);
+      final currentRank = ranks[entry.value];
+      if (oldRank != null &&
+          (currentRank == null || oldRank < currentRank)) {
+        ranks[entry.value] = oldRank;
+      }
+      known.remove(entry.key);
+      known[entry.value] = _capture(byId[entry.value]!);
+    }
+    _favoriteIds = {
+      for (final id in _favoriteIds) redirects[id] ?? id,
+    };
+    await prefs.setString(_onlineMetadataKey, jsonEncode(known));
+    await prefs.setString(_likedOrderKey, jsonEncode(ranks));
+    // The link baseline is an ID projection, not a remote unlike operation.
+    final baseline = prefs.getStringList('lokal.link.favorites_snapshot');
+    if (baseline != null) {
+      await prefs.setStringList('lokal.link.favorites_snapshot', {
+        for (final id in baseline) redirects[id] ?? id,
+      }.toList());
+    }
+    await _saveFavorites(captureLink: false);
   }
 
   static Song? _restore(Object? raw) {
@@ -85,7 +161,9 @@ class FavoritesService {
       atmosEncoded: song['atmosEncoded'] == true,
       remoteId: song['remoteId'] as String?,
       remoteServerId: (song['remoteServerId'] as num?)?.toInt(),
-      isExternal: true,
+      startOffsetMs: (song['startOffsetMs'] as num?)?.toInt(),
+      endOffsetMs: (song['endOffsetMs'] as num?)?.toInt(),
+      isExternal: song['isExternal'] != false,
     );
   }
 
@@ -107,6 +185,7 @@ class FavoritesService {
     } catch (_) {
       return; // Never damage a saved favorite when the library is offline.
     }
+    await _repairLocalIds(songs);
     _desktopCopyRedirects = desktopCopyFavoriteRedirects(songs);
     _latestDesktopCopyRedirects = _desktopCopyRedirects;
     if (_desktopCopyRedirects.isEmpty) return;
@@ -138,6 +217,19 @@ class FavoritesService {
     }
     ranks.removeWhere((key, _) => !normalized.contains(key));
     await prefs.setString(_likedOrderKey, jsonEncode(ranks));
+    final known = _savedMetadata(prefs);
+    for (final redirect in _desktopCopyRedirects.entries) {
+      if (known.containsKey(redirect.key)) {
+        known.remove(redirect.key);
+        final canonicalSong = songs.where(
+          (song) => song.id == redirect.value,
+        ).firstOrNull;
+        if (canonicalSong != null) {
+          known[redirect.value] = _capture(canonicalSong);
+        }
+      }
+    }
+    await prefs.setString(_onlineMetadataKey, jsonEncode(known));
     _favoriteIds = normalized;
     // Baselines must be redirected too. Otherwise a later unrelated heart
     // would journal a spurious remote unlike for the duplicate's old row.
@@ -244,20 +336,19 @@ class FavoritesService {
     } catch (_) {
       allSongs = [];
     }
-    final liked = allSongs.where((song) => ids.contains(song.id)).toList();
-    final inLibrary = liked.map((song) => song.id).toSet();
     final prefs = await SharedPreferences.getInstance();
-    try {
-      final extras = jsonDecode(prefs.getString(_onlineMetadataKey) ?? '{}');
-      if (extras is Map) {
-        for (final id in ids) {
-          if (inLibrary.contains(id)) continue;
-          final song = _restore(extras[id]);
-          if (song != null) liked.add(song);
-        }
-      }
-    } catch (_) {
-      // Broken extra metadata must never hide local favorites.
+    final snapshots = _savedMetadata(prefs);
+    final liked = allSongs.where((song) =>
+        ids.contains(song.id) &&
+        _sameLocalRecording(song, snapshots[song.id])).toList();
+    final inLibrary = liked.map((song) => song.id).toSet();
+    for (final id in ids) {
+      if (inLibrary.contains(id)) continue;
+      // Retain offline/unscanned local files as well as online references.
+      // This also prevents an unrelated track reusing an old Isar ID from
+      // appearing as liked after the next scan.
+      final song = _restore(snapshots[id]);
+      if (song != null) liked.add(song);
     }
     return liked;
   }
@@ -281,7 +372,7 @@ class FavoritesService {
       return;
     }
     await _mutate(() async {
-      if (song != null) await _rememberOnline(song);
+      if (song != null) await _rememberSong(song);
       final before = Set<String>.of(_favoriteIds);
       _favoriteIds.add(_canonicalId(songId));
       await _saveLikeRanks(before: before, after: _favoriteIds);
@@ -299,7 +390,7 @@ class FavoritesService {
     await _mutate(() async {
       final before = Set<String>.of(_favoriteIds);
       _favoriteIds.remove(_canonicalId(songId));
-      await _forgetOnline(songId);
+      await _forgetSong(songId);
       await _saveLikeRanks(before: before, after: _favoriteIds);
       await _saveFavorites();
     });
@@ -318,12 +409,12 @@ class FavoritesService {
       if (_favoriteIds.contains(canonicalId)) {
         final before = Set<String>.of(_favoriteIds);
         _favoriteIds.remove(canonicalId);
-        await _forgetOnline(songId);
+        await _forgetSong(songId);
         await _saveLikeRanks(before: before, after: _favoriteIds);
         await _saveFavorites();
         return false;
       }
-      if (song != null) await _rememberOnline(song);
+      if (song != null) await _rememberSong(song);
       final before = Set<String>.of(_favoriteIds);
       _favoriteIds.add(canonicalId);
       await _saveLikeRanks(before: before, after: _favoriteIds);
@@ -354,7 +445,7 @@ class FavoritesService {
         entry.value
             ? _favoriteIds.add(id)
             : _favoriteIds.remove(id);
-        if (!entry.value) await _forgetOnline(entry.key);
+        if (!entry.value) await _forgetSong(entry.key);
       }
       await _saveLikeRanks(before: before, after: _favoriteIds);
       await _saveFavorites(captureLink: false);
