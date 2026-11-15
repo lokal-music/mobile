@@ -38,6 +38,7 @@ import 'package:flick/widgets/common/cached_image_widget.dart';
 import 'package:flick/widgets/lokal/lokal_glass.dart';
 import 'package:flick/widgets/lokal/lokal_choice_sheet.dart';
 import 'package:flick/widgets/lokal/lokal_status_snack.dart';
+import 'package:flick/widgets/lokal/lokal_toast.dart';
 import 'package:flick/features/link/lokal_ghost_availability.dart';
 
 import 'artist_follow_store.dart';
@@ -1240,7 +1241,7 @@ class _LokalMusicDetailPageState extends ConsumerState<LokalMusicDetailPage> {
     try {
       await OnlineAlbumStore.instance.setSaved(album, !_savedAlbum);
       if (mounted) {
-        _progress.success(_savedAlbum
+        LokalToast.show(context, _savedAlbum
             ? lokalText('Saved to Albums.')
             : lokalText('Removed from Albums.'));
       }
