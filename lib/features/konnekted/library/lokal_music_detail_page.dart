@@ -41,6 +41,7 @@ import 'package:flick/widgets/lokal/lokal_status_snack.dart';
 import 'package:flick/features/link/lokal_ghost_availability.dart';
 
 import 'artist_follow_store.dart';
+import 'online_album_store.dart';
 import 'lokal_artwork_reveal.dart';
 import 'lokal_artist_motion_backdrop.dart';
 import 'lokal_detail_header.dart';
@@ -119,6 +120,8 @@ class _LokalMusicDetailPageState extends ConsumerState<LokalMusicDetailPage> {
       _loading = false,
       _busy = false,
       _followed = false,
+      _savedAlbum = false,
+      _albumSaving = false,
       _allSongs = false;
   // Playback already reports its own progress in the player. Keep this out of
   // setState: toggling the shared download/action busy state redraws the page's
@@ -153,7 +156,15 @@ class _LokalMusicDetailPageState extends ConsumerState<LokalMusicDetailPage> {
     super.initState();
     LokalPerformanceAdvisor.noteNavigation(surface: 'detail');
     _scrollController.addListener(_updateHeroVisibility);
+    OnlineAlbumStore.instance.addListener(_onSavedAlbumsChanged);
     _restore();
+  }
+
+  void _onSavedAlbumsChanged() {
+    if (mounted && !widget.isArtist) {
+      final saved = OnlineAlbumStore.instance.isSaved(widget.title, widget.artist);
+      if (saved != _savedAlbum) setState(() => _savedAlbum = saved);
+    }
   }
 
   @override
@@ -242,6 +253,7 @@ class _LokalMusicDetailPageState extends ConsumerState<LokalMusicDetailPage> {
       _artistVisuals = null;
       _visualEvidenceKey = null;
       ++_visualRequest;
+      _onSavedAlbumsChanged();
       if (_relatedReady && widget.isArtist) unawaited(_loadArtistVisuals());
     }
   }
@@ -281,9 +293,12 @@ class _LokalMusicDetailPageState extends ConsumerState<LokalMusicDetailPage> {
   Future<void> _restore() async {
     final prefs = await SharedPreferences.getInstance();
     await ArtistFollowStore.instance.load();
+    if (!widget.isArtist) await OnlineAlbumStore.instance.load();
     if (!mounted) return;
     setState(() {
       _followed = ArtistFollowStore.instance.isFollowed(widget.artist);
+      _savedAlbum = !widget.isArtist &&
+          OnlineAlbumStore.instance.isSaved(widget.title, widget.artist);
     });
     if (widget.isArtist && Database.isInitialized) {
       try {
@@ -661,6 +676,7 @@ class _LokalMusicDetailPageState extends ConsumerState<LokalMusicDetailPage> {
   @override
   void dispose() {
     _entryAnimation?.removeStatusListener(_onEntryStatus);
+    OnlineAlbumStore.instance.removeListener(_onSavedAlbumsChanged);
     ++_request;
     ++_visualRequest;
     _cancel.complete();
@@ -1005,13 +1021,23 @@ class _LokalMusicDetailPageState extends ConsumerState<LokalMusicDetailPage> {
                       _control(
                         widget.isArtist
                             ? (_followed ? Icons.star_rounded : Icons.star_border_rounded)
-                            : (allLiked ? Icons.favorite_rounded : Icons.favorite_border_rounded),
+                            : (_savedAlbum ? Icons.favorite_rounded : Icons.favorite_border_rounded),
                         widget.isArtist
                             ? (_followed ? lokalText('Unfollow artist') : lokalText('Follow artist'))
-                            : lokalText('Like all'),
-                        !widget.isArtist && local.isEmpty
-                            ? null : () => widget.isArtist
-                                ? _follow() : _like(local, !allLiked),
+                            : (_savedAlbum ? lokalText('Remove from Albums') : lokalText('Save to Albums')),
+                        _albumSaving || _busy
+                            ? null
+                            : () => widget.isArtist ? _follow() : _saveAlbum(
+                                  LokalCatalogueAlbum(
+                                    title: widget.title, artist: widget.artist,
+                                    artwork: heroImage ?? '',
+                                    id: (_page?.albums.firstOrNull ?? widget.release)?.id,
+                                    date: (_page?.albums.firstOrNull ?? widget.release)?.date,
+                                    trackCount: (_page?.albums.firstOrNull ?? widget.release)?.trackCount,
+                                    url: (_page?.albums.firstOrNull ?? widget.release)?.url ?? '',
+                                    releaseKind: (_page?.albums.firstOrNull ?? widget.release)?.releaseKind,
+                                  ),
+                                ),
                       ),
                     ],
                   ),
@@ -1200,8 +1226,29 @@ class _LokalMusicDetailPageState extends ConsumerState<LokalMusicDetailPage> {
 
   Future<void> _follow() async {
     final next = !_followed;
-    await ArtistFollowStore.instance.setFollowed(widget.artist, next);
-    if (mounted) setState(() => _followed = next);
+    try {
+      await ArtistFollowStore.instance.setFollowed(widget.artist, next);
+      if (mounted) setState(() => _followed = next);
+    } catch (error) {
+      if (mounted) _progress.fail(discoveryError(error));
+    }
+  }
+
+  Future<void> _saveAlbum(LokalCatalogueAlbum album) async {
+    if (_albumSaving) return;
+    setState(() => _albumSaving = true);
+    try {
+      await OnlineAlbumStore.instance.setSaved(album, !_savedAlbum);
+      if (mounted) {
+        _progress.success(_savedAlbum
+            ? lokalText('Saved to Albums.')
+            : lokalText('Removed from Albums.'));
+      }
+    } catch (error) {
+      if (mounted) _progress.fail(discoveryError(error));
+    } finally {
+      if (mounted) setState(() => _albumSaving = false);
+    }
   }
 
   Future<void> _like(List<Song> songs, bool value) async {
