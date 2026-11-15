@@ -22,6 +22,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'artist_follow_store.dart';
+import 'online_album_store.dart';
+import 'package:flick/widgets/common/cached_image_widget.dart';
 import 'lokal_library_kit.dart';
 import 'lokal_library_groups.dart';
 import 'lokal_music_detail_page.dart';
@@ -219,35 +221,102 @@ class _SearchablePageState<T> extends State<_SearchablePage<T>> {
   }
 }
 
-/// Library › Albums: a grid of covers.
-class LokalAlbumsPage extends ConsumerWidget {
+/// Library › Albums includes catalogue bookmarks as well as local audio tags.
+class _AlbumLibraryEntry {
+  const _AlbumLibraryEntry.local(this.local) : saved = null;
+  const _AlbumLibraryEntry.online(this.saved) : local = null;
+  final AlbumGroup? local;
+  final SavedOnlineAlbum? saved;
+  String get title => local?.albumName ?? saved!.title;
+  String get artist => local?.albumArtist ?? saved!.artist;
+}
+
+class LokalAlbumsPage extends ConsumerStatefulWidget {
   const LokalAlbumsPage({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) =>
-      _SearchablePage<AlbumGroup>(
-        title: lokalText('Albums'),
-        job: LibraryJob.releases,
-        preferencesKey: 'lokal.library.albums.search.v1',
-        items: ref.watch(lokalAlbumsProvider),
-        nameOf: (a) => '${a.albumName}\n${a.albumArtist}',
-        hint: 'Search albums',
-        emptyIcon: Icons.album_rounded,
-        emptyMessage: 'Albums come from your files’ album tags.',
-        builder: (albums) => LokalCardGrid(
-          itemCount: albums.length,
-          itemBuilder: (context, index) {
-            final album = albums[index];
-            return LokalCoverCard(
-              art: _AlbumArt(album.songs),
-              title: album.albumName,
-              subtitle: album.albumArtist,
-              heroTag: 'lokal:album:${album.key}',
-              onTap: () => pushLokal(context, LokalAlbumPage(album: album)),
-            );
-          },
-        ),
-      );
+  ConsumerState<LokalAlbumsPage> createState() => _LokalAlbumsPageState();
+}
+
+class _LokalAlbumsPageState extends ConsumerState<LokalAlbumsPage> {
+  final OnlineAlbumStore _saved = OnlineAlbumStore.instance;
+
+  @override
+  void initState() {
+    super.initState();
+    _saved.addListener(_changed);
+    unawaited(_saved.load().catchError((Object _) {}));
+  }
+
+  void _changed() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    _saved.removeListener(_changed);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final entries = ref.watch(lokalAlbumsProvider).whenData((albums) {
+      final localKeys = albums
+          .map((a) => OnlineAlbumStore.keyOf(a.albumName, a.albumArtist))
+          .toSet();
+      final rows = <_AlbumLibraryEntry>[
+        for (final album in albums) _AlbumLibraryEntry.local(album),
+        for (final album in _saved.albums)
+          if (!localKeys.contains(album.key)) _AlbumLibraryEntry.online(album),
+      ];
+      rows.sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
+      return rows;
+    });
+    return _SearchablePage<_AlbumLibraryEntry>(
+      title: lokalText('Albums'),
+      job: LibraryJob.releases,
+      preferencesKey: 'lokal.library.albums.search.v1',
+      items: entries,
+      nameOf: (row) => '${row.title}\n${row.artist}',
+      hint: 'Search albums',
+      emptyIcon: Icons.album_rounded,
+      emptyMessage: 'Save online albums or add music folders to your library.',
+      builder: (rows) => LokalCardGrid(
+        itemCount: rows.length,
+        itemBuilder: (context, index) {
+          final row = rows[index];
+          final album = row.local;
+          final saved = row.saved;
+          return LokalCoverCard(
+            art: album != null
+                ? _AlbumArt(album.songs)
+                : saved!.artwork.isEmpty
+                    ? const Center(child: Icon(Icons.album_rounded, size: 44))
+                    : CachedImageWidget(
+                        imagePath: saved.artwork, fit: BoxFit.cover,
+                      ),
+            title: row.title,
+            subtitle: row.artist,
+            heroTag: album != null
+                ? 'lokal:album:${album.key}'
+                : 'lokal:online-album:${saved!.key}',
+            onTap: () => album != null
+                ? pushLokal(context, LokalAlbumPage(album: album))
+                : pushLokal(
+                    context,
+                    LokalMusicDetailPage.album(
+                      title: saved!.title,
+                      artist: saved.artist,
+                      localSongs: const [],
+                      release: saved.release,
+                      initialOnline: true,
+                    ),
+                  ),
+          );
+        },
+      ),
+    );
+  }
 }
 
 /// Spotify favorites may not have local songs. Keep them in Artists anyway.
@@ -263,7 +332,7 @@ List<LokalArtist> selectArtistFavorites(
     final key = recommendationKey(artist.name);
     if (key.isNotEmpty) rows.putIfAbsent(key, () => artist);
   }
-  for (final name in follows.knownNames) {
+  for (final name in follows.followedNames) {
     final key = recommendationKey(name);
     if (key.isNotEmpty) {
       rows.putIfAbsent(key, () => LokalArtist(name, const []));
@@ -474,7 +543,7 @@ class _LokalArtistsPageState extends ConsumerState<LokalArtistsPage> {
       emptyIcon: Icons.person_rounded,
       emptyMessage: switch (_filter) {
         ArtistFavoritesFilter.all => lokalText(
-          'Artists come from your library or Spotify favorites.',
+          'Artists come from your library or artists you follow online.',
         ),
         ArtistFavoritesFilter.favorites => lokalText(
           'Follow an artist or import your Spotify favorites.',
@@ -574,7 +643,7 @@ class _ArtistRow extends ConsumerWidget {
                       ),
                       Text(
                         artist.songs.isEmpty
-                            ? 'Not in library'
+                            ? 'Followed online'
                             : lokalSongCount(artist.songs.length),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
