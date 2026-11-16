@@ -2,7 +2,7 @@ name: iOS release regression fix
 on:
   pull_request:
     branches: [main]
-    types: [opened, synchronize, reopened, closed]
+    types: [opened, synchronize, reopened]
     paths:
       - 'lib/features/konnekted/library/artist_follow_store.dart'
       - 'lib/features/konnekted/library/lokal_albums_artists.dart'
@@ -10,17 +10,18 @@ on:
       - 'test/spotify/artist_follow_link_test.dart'
       - 'test/konnekted/tablet_player_sidebar_test.dart'
       - '.github/workflows/ios-release-regression-fix.yml'
+  push:
+    branches: [main]
+    paths: ['.github/workflows/ios-release-regression-fix.yml']
 permissions:
   contents: read
 jobs:
   regressions:
-    if: github.event.action != 'closed' || github.event.pull_request.merged == true
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ github.event.action == 'closed' && github.event.pull_request.merge_commit_sha || github.sha }}
           persist-credentials: false
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
         with:
@@ -37,14 +38,12 @@ jobs:
       - run: git diff --exit-code -- pubspec.lock
   rebuild:
     needs: regressions
-    # One-time rebuild for this explicitly requested fix. No pull-request code
-    # executes with the Actions write token; only static dispatch commands run.
+    # Dispatch only the explicitly marked, merged correction. Ordinary PRs
+    # and future workflow edits cannot start releases. No checkout in this job.
     if: >-
-      github.event.action == 'closed' &&
-      github.event.pull_request.merged == true &&
-      github.event.pull_request.head.ref == 'fix/ios-release-regressions' &&
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      github.event.pull_request.base.ref == 'main'
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      contains(github.event.head_commit.message, '[rebuild-ios-regressions]')
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -57,6 +56,3 @@ jobs:
         run: |
           gh workflow run ios-ci.yml --ref main -f bump=patch -f publish=true -f native_acceptance=false -f live_video_probe=false
           gh workflow run android-release.yml --ref main -f bump=patch -f flavor=full -f replace_existing=false -f draft=false
-        run: |
-          gh workflow run android-release.yml --repo "$GITHUB_REPOSITORY" --ref main --field bump=patch --field flavor=full
-          gh workflow run ios-ci.yml --repo "$GITHUB_REPOSITORY" --ref main --field bump=patch --field publish=true
