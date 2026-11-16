@@ -332,7 +332,9 @@ List<LokalArtist> selectArtistFavorites(
     final key = recommendationKey(artist.name);
     if (key.isNotEmpty) rows.putIfAbsent(key, () => artist);
   }
-  for (final name in follows.followedNames) {
+  // Keep imported artists browsable after unfollowing and after a restart.
+  // The filter below decides whether their current favorite state is visible.
+  for (final name in follows.knownNames) {
     final key = recommendationKey(name);
     if (key.isNotEmpty) {
       rows.putIfAbsent(key, () => LokalArtist(name, const []));

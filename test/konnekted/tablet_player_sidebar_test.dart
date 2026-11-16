@@ -1,3 +1,4 @@
+import 'package:flick/models/audio_engine_type.dart';
 import 'package:flick/features/konnekted/konnekted_shell.dart';
 import 'package:flick/widgets/lokal/lokal_glass.dart';
 import 'package:flick/l10n/l10n.dart';
@@ -199,6 +200,10 @@ class _History extends Fake implements RecentlyPlayedRepository {
 }
 
 class _Service extends Fake implements PlayerService {
+  @override
+  final extendedVolumeEnabledNotifier = ValueNotifier(false);
+  @override
+  AudioEngineType get currentEngineType => AudioEngineType.normalAndroid;
   @override
   final isPlayingNotifier = ValueNotifier(false);
   @override
