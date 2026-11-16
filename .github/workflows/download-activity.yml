@@ -49,6 +49,9 @@ jobs:
           lib/features/konnekted/konnekted_discovery_view.dart
           lib/features/search/widgets/global_catalogue_search_section.dart
           lib/features/konnekted/library/collection_downloads.dart
+          lib/features/konnekted/library/collection_download_dialog.dart
+          lib/features/konnekted/library/lokal_song_browser.dart
+          test/konnekted/collection_download_actions_test.dart
           lib/features/konnekted/library/lokal_music_detail_page.dart
           lib/services/soulseek_service.dart
           lib/features/konnekted/konnekted_library.dart

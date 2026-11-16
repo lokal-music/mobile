@@ -144,6 +144,7 @@ class LokalSongBrowser extends ConsumerStatefulWidget {
     this.subtitleOf,
     this.recentlyAddedRanks,
     this.preferencesKey,
+    this.onDownload,
   });
 
   final List<Song> songs;
@@ -159,6 +160,9 @@ class LokalSongBrowser extends ConsumerStatefulWidget {
   /// Offers [LokalSongSort.original] under this name, e.g. "Playlist order".
   final String? originalLabel;
   final String searchHint;
+
+  /// Downloads the full collection, independently of the browser's filters.
+  final VoidCallback? onDownload;
 
   /// Offered in each song's actions, e.g. remove from this playlist.
   final void Function(Song song)? onRemove;
@@ -573,6 +577,17 @@ class _LokalSongBrowserState extends ConsumerState<LokalSongBrowser> {
           ),
         ),
         SliverToBoxAdapter(child: LokalPlayShufflePills(songs: songs)),
+        if (widget.onDownload != null)
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
+              child: LokalPill(
+                icon: Icons.download_rounded,
+                label: lokalText('Download missing songs'),
+                onTap: widget.onDownload,
+              ),
+            ),
+          ),
         if (songs.isEmpty)
           SliverToBoxAdapter(
             child: LokalEmptyState(
@@ -654,15 +669,6 @@ class LokalSongListPage extends ConsumerWidget {
               : lokalText('Loading history…'));
     return LokalLibraryPage(
       title: title,
-      actions: [
-        if (downloadMissing && list != null && list.isNotEmpty)
-          LokalRoundAction(
-            icon: Icons.download_rounded,
-            label: lokalText('Download missing songs'),
-            onPressed: () =>
-                unawaited(downloadMissingCollectionSongs(context, ref, list)),
-          ),
-      ],
       // Recently Played uses a full-size metadata row: never hide its
       // running time in the small uppercase section-label treatment.
       subtitle: showTotalDuration
@@ -696,6 +702,11 @@ class LokalSongListPage extends ConsumerWidget {
             subtitleOf: subtitleOf,
             recentlyAddedRanks: recentlyAddedRanks?.call(ref),
             preferencesKey: preferencesKey,
+            onDownload: downloadMissing
+                ? () => unawaited(
+                    downloadMissingCollectionSongs(context, ref, list),
+                  )
+                : null,
           )
         else
           SliverToBoxAdapter(

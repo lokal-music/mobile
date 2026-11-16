@@ -5,6 +5,7 @@ import 'package:flick/features/konnekted/konnekted_data.dart';
 import 'package:flick/features/konnekted/library/collection_download_dialog.dart';
 import 'package:flick/features/konnekted/library/collection_downloads.dart';
 import 'package:flick/features/konnekted/library/lokal_library_pages.dart';
+import 'package:flick/features/konnekted/library/lokal_library_kit.dart';
 import 'package:flick/features/konnekted/library/lokal_playlists.dart';
 import 'package:flick/features/konnekted/library/playlist_hero_header.dart';
 import 'package:flick/models/playlist.dart';
@@ -104,7 +105,13 @@ void main() {
         await tester.enterText(find.byType(TextField), 'One');
         await tester.pumpAndSettle(const Duration(milliseconds: 300));
         if (liked) {
-          await tester.tap(find.byTooltip('Download missing songs'));
+          final downloadAction = find.widgetWithText(
+            LokalPill,
+            'Download missing songs',
+          );
+          expect(downloadAction, findsOneWidget);
+          expect(find.byTooltip('Download missing songs'), findsNothing);
+          await tester.tap(downloadAction);
         } else {
           await tester.tap(find.byTooltip('More').first);
           await tester.pumpAndSettle();
