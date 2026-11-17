@@ -44,6 +44,10 @@ const navActions = html.split('<div class="nav-actions">')[1]?.split('</div>')[0
 assert.match(navActions, /class="social-link github-link"/, 'GitHub header link is missing');
 assert.match(navActions, /viewBox="-1 -1 18 18"/, 'GitHub logo should have breathing room and avoid clipping');
 assert.match(navActions, /class="social-link discord-link"/, 'Discord header link is missing');
+assert.match(navActions, /class="discord-label">Discord<\/span>/, 'Discord needs a visible desktop label');
+assert.match(navActions, /<svg width="24" height="24" viewBox="0 0 24 24"/, 'Discord glyph needs explicit dimensions even if CSS is stale');
+assert.match(html, /site\/styles\.css\?v=20261117-discord/, 'Cache-busted stylesheet required for header icons');
+assert.match(css, /\.discord-link \{[^}]*display: inline-flex/, 'Discord header call-to-action needs visible desktop presentation');
 assert.match(navActions, /aria-label="Join Lokal Music on Discord"/, 'Discord icon needs an accessible label');
 assert.ok(navActions.includes('https://discord.com/invite/8bUGWChwpG'), 'Header must use the app Discord invite');
 assert.match(css, /\.social-link svg \{[^}]*overflow:\s*visible/, 'Social icon SVGs should not clip');
