@@ -389,6 +389,9 @@ class _AlbumArtBoxState extends ConsumerState<AlbumArtBox>
           : widget.song.artist,
       album: album,
       albumMode: useAlbum,
+      // Preserve album-artist matching while sharing cached artwork with
+      // full-player lookups that use the song's credited track artist.
+      offlineArtistAlias: widget.song.artist,
       representativeSongTitle: useAlbum ? widget.song.title : null,
       duration: widget.song.duration,
       enabled:
