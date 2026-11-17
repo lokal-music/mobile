@@ -13,6 +13,14 @@ import 'package:http/testing.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  // Flutter's widget-test HttpOverrides normally rejects every HTTP request.
+  // The loopback player server needs a real localhost client.
+  final previousHttp = HttpOverrides.current;
+  setUpAll(() => HttpOverrides.global = null);
+  tearDownAll(() async {
+    await LocalMotionHlsServer.closeForTesting();
+    HttpOverrides.global = previousHttp;
+  });
 
   late Directory directory;
   setUp(() async {
@@ -22,8 +30,6 @@ void main() {
   tearDown(() async {
     if (await directory.exists()) await directory.delete(recursive: true);
   });
-
-  tearDownAll(LocalMotionHlsServer.closeForTesting);
 
   const mp4 = AnimatedArtwork(
     name: 'Album',
