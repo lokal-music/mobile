@@ -1,7 +1,9 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flick/services/motion_art/animated_artwork_service.dart';
 import 'package:flick/services/motion_art/motion_art_offline_cache.dart';
+import 'package:flick/services/motion_art/local_motion_hls_server.dart';
 import 'package:flick/services/motion_art/moving_cover_service.dart';
 import 'package:flick/services/motion_art/moving_cover_settings.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -20,6 +22,8 @@ void main() {
   tearDown(() async {
     if (await directory.exists()) await directory.delete(recursive: true);
   });
+
+  tearDownAll(LocalMotionHlsServer.closeForTesting);
 
   const mp4 = AnimatedArtwork(
     name: 'Album',
@@ -56,6 +60,11 @@ void main() {
     final uri = Uri.parse(playable!.url);
     expect(uri.scheme, 'file');
     expect(await File.fromUri(uri).readAsString(), 'video bytes');
+    // Spotify Canvas is a progressive MP4 and must stay an ordinary local
+    // file even when full-bleed playback requests a portrait variant.
+    final portrait = await restarted.playable(art!, preferVertical: true);
+    expect(Uri.parse(portrait!.url).scheme, 'file');
+    expect(portrait.cachedSource, mp4.playbackUrl);
   });
 
   test('moving-cover resolver finds offline video without any provider requests',
@@ -227,14 +236,59 @@ void main() {
 
     await cache.remember('hls', artwork, preferVertical: false);
     final playable = await cache.playable(artwork, preferVertical: false);
-    final playlist = await File.fromUri(Uri.parse(playable!.url)).readAsString();
+    // AVPlayer/ExoPlayer must consume a real local HLS HTTP source, never a
+    // file:// manifest or a CDN request. Media and range requests remain local.
+    final uri = Uri.parse(playable!.url);
+    expect(uri.scheme, 'http');
+    expect(uri.host, '127.0.0.1');
+    final nativeClient = HttpClient();
+    addTearDown(nativeClient.close);
+    final response = await (await nativeClient.getUrl(uri)).close();
+    expect(response.statusCode, 200);
+    expect(response.headers.contentType?.mimeType, 'application/vnd.apple.mpegurl');
+    final playlist = await utf8.decoder.bind(response).join();
     expect(playable.cachedSource, artwork.playbackUrl);
+    final segmentRequest = await nativeClient.getUrl(uri.resolve('asset_1.m4s'));
+    segmentRequest.headers.set('range', 'bytes=1-3');
+    final segment = await segmentRequest.close();
+    expect(segment.statusCode, 206);
+    expect(segment.headers.value('content-range'), 'bytes 1-3/8');
+    expect(await utf8.decoder.bind(segment).join(), 'egm');
+    final traversal = await (await nativeClient.getUrl(
+      uri.resolve('%2e%2e/complete.json'),
+    )).close();
+    expect(traversal.statusCode, 404);
     expect(playlist, contains('URI="asset_0.mp4"'));
     expect(playlist, contains('asset_1.m4s'));
     expect(playlist, contains('asset_2.m4s'));
     expect(playlist, isNot(contains('https://')));
     expect(urls.length, 4);
     expect(await cache.find('hls'), isNotNull);
+  });
+
+  test('missing HLS segments invalidate an otherwise complete marker', () async {
+    const artwork = AnimatedArtwork(
+      name: 'Album',
+      artist: 'Artist',
+      albumId: 'apple:album',
+      animatedUrl: 'https://cdn.example.com/media.m3u8',
+    );
+    final cache = MotionArtOfflineCache.create(
+      directory: directory,
+      client: MockClient((request) async => switch (request.url.path) {
+        '/media.m3u8' => http.Response(
+            '#EXTM3U\n#EXTINF:2,\nsegment.ts\n#EXT-X-ENDLIST\n', 200),
+        '/segment.ts' => http.Response('segment bytes', 200),
+        _ => http.Response('not found', 404),
+      }),
+    );
+    await cache.remember('hls', artwork, preferVertical: false);
+    expect(await cache.find('hls'), isNotNull);
+    final root = Directory('${directory.path}/motion_art_offline');
+    final clip = (await root.list().where((e) => e is Directory).toList())
+        .whereType<Directory>().single;
+    await File('${clip.path}/asset_0.ts').delete();
+    expect(await cache.find('hls'), isNull);
   });
 
   test('never marks incomplete or encrypted HLS as offline playable', () async {
