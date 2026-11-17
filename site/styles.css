@@ -41,9 +41,9 @@ img, svg { max-width: 100%; display: block }
 .nav-links a { font-size: 13px; font-weight: 600; color: #b7c3be; transition: color .2s }
 .nav-links a:hover { color: var(--mint) }
 .nav-actions { display: flex; align-items: center; gap: 19px }
-.github-link { color: #cbd6d0; display: grid; place-items: center; width: 29px; height: 29px; transition: color .25s, transform .25s }
-.github-link svg { width: 23px; height: 23px }
-.github-link:hover { transform: translateY(-2px); color: var(--mint) }
+.social-link { color: #cbd6d0; display: grid; place-items: center; flex: 0 0 34px; width: 34px; height: 34px; border-radius: 50%; transition: color .25s, transform .25s }
+.social-link svg { display: block; width: 24px; height: 24px; overflow: visible }
+.social-link:hover { transform: translateY(-2px); color: var(--mint) }
 .button { display: inline-flex; gap: 25px; align-items: center; justify-content: center; border-radius: 100px; font-size: 13px; font-weight: 700; transition: transform .3s var(--ease), background .3s, border-color .3s, color .3s; white-space: nowrap }
 .button:hover { transform: translateY(-3px) }
 .button-nav { background: #d9f4bd; color: #0f201a; height: 40px; padding: 0 21px; gap: 17px }
@@ -386,7 +386,8 @@ h2 { font: 700 clamp(40px,5.1vw,73px)/1.14 var(--display); letter-spacing: -.075
   .brand { font-size: 23px; }
   .brand-icon { width: 31px; height: 31px }
   .nav-actions { gap: 11px }
-  .github-link { display: none }
+  .social-link { flex-basis: 29px; width: 29px; height: 29px }
+  .social-link svg { width: 22px; height: 22px }
   .button-nav { height: 37px; font-size: 11px; padding: 0 16px; gap: 8px }
   .hero { min-height: 0 }
   .hero-grid { padding-bottom: 18px }
@@ -483,6 +484,9 @@ h2 { font: 700 clamp(40px,5.1vw,73px)/1.14 var(--display); letter-spacing: -.075
   .footer-links { gap: 14px 25px; }
   .footer-links a { font-size: 12px }
   .footer-bottom { margin-top: 32px; justify-content: flex-start; gap: 8px 20px; line-height: 1.8; padding-bottom: 21px }
+}
+@media (max-width: 350px) {
+  .button-nav { display: none }
 }
 @media (max-width: 360px) {
   .hero h1 { font-size: 45px }
