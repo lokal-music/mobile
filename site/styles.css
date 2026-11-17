@@ -44,6 +44,10 @@ img, svg { max-width: 100%; display: block }
 .social-link { color: #cbd6d0; display: grid; place-items: center; flex: 0 0 34px; width: 34px; height: 34px; border-radius: 50%; transition: color .25s, transform .25s }
 .social-link svg { display: block; width: 24px; height: 24px; overflow: visible }
 .social-link:hover { transform: translateY(-2px); color: var(--mint) }
+.discord-link { display: inline-flex; width: auto; min-width: 0; flex: 0 0 auto; height: 38px; padding: 0 13px; gap: 9px; border: 1px solid rgba(173,246,213,.24); background: rgba(173,246,213,.075); border-radius: 99px; color: var(--mint); }
+.discord-link:hover { background: rgba(173,246,213,.16); border-color: rgba(173,246,213,.55) }
+.discord-label { font: 700 12px/1 var(--body); letter-spacing: .01em; white-space: nowrap }
+.discord-link svg, .github-link svg { flex-shrink: 0 }
 .button { display: inline-flex; gap: 25px; align-items: center; justify-content: center; border-radius: 100px; font-size: 13px; font-weight: 700; transition: transform .3s var(--ease), background .3s, border-color .3s, color .3s; white-space: nowrap }
 .button:hover { transform: translateY(-3px) }
 .button-nav { background: #d9f4bd; color: #0f201a; height: 40px; padding: 0 21px; gap: 17px }
@@ -385,9 +389,12 @@ h2 { font: 700 clamp(40px,5.1vw,73px)/1.14 var(--display); letter-spacing: -.075
   .nav-links { top: 66px; padding-inline: 18px }
   .brand { font-size: 23px; }
   .brand-icon { width: 31px; height: 31px }
-  .nav-actions { gap: 11px }
+  .nav-wrap { gap: 12px }
+  .nav-actions { gap: 8px; flex-shrink: 0 }
   .social-link { flex-basis: 29px; width: 29px; height: 29px }
   .social-link svg { width: 22px; height: 22px }
+  .discord-link { width: 34px; height: 34px; padding: 0; flex: 0 0 34px; justify-content: center }
+  .discord-label { display: none }
   .button-nav { height: 37px; font-size: 11px; padding: 0 16px; gap: 8px }
   .hero { min-height: 0 }
   .hero-grid { padding-bottom: 18px }
