@@ -55,6 +55,7 @@ jobs:
           lib/features/player lib/features/settings/lokal/groups/appearance_group.dart
           lib/providers/full_player_waveform_provider.dart lib/providers/progress_bar_style_provider.dart
           lib/services/audio_analysis_queue.dart lib/services/song_waveform_service.dart
+          lib/services/motion_art
       - name: Verify seeking, persistence, layouts and localization
         run: >-
           flutter test --no-pub
@@ -80,4 +81,5 @@ jobs:
           test/widgets/motion_art_suppression_test.dart
           test/widgets/motion_art_loading_fallback_test.dart
           test/services/shared_motion_playback_test.dart
+          test/services/motion_art_offline_cache_test.dart
       - run: git diff --exit-code -- pubspec.lock
