@@ -105,6 +105,57 @@ void main() {
     expect(result.transient, isFalse);
   });
 
+  test('album and track artist identities find one cached Spotify Canvas',
+      () async {
+    var downloads = 0;
+    final cache = MotionArtOfflineCache.create(
+      directory: directory,
+      client: MockClient((_) async {
+        downloads++;
+        return http.Response('canvas bytes', 200);
+      }),
+    );
+    final service = MovingCoverService(
+      offlineCache: cache,
+      client: MockClient((request) async =>
+          throw StateError('Unexpected online lookup: $request')),
+    );
+    await service.cachePlayedClip(
+      title: 'Track',
+      artist: 'Album Artist',
+      alternateArtist: 'Track Artist',
+      album: 'Album',
+      artwork: mp4,
+      preferVertical: false,
+    );
+    expect(downloads, 1);
+
+    final restarted = MovingCoverService(
+      offlineCache: MotionArtOfflineCache.create(
+        directory: directory,
+        client: MockClient((request) async =>
+            throw StateError('No offline download: $request')),
+      ),
+      client: MockClient((request) async =>
+          throw StateError('No offline provider: $request')),
+    );
+    final fullPlayer = await restarted.lookup(
+      title: 'Track',
+      artist: 'Track Artist',
+      album: 'Album',
+    );
+    expect(fullPlayer.artwork?.albumId, 'spotify:track');
+
+    final miniPlayer = await restarted.lookup(
+      title: 'Track',
+      artist: 'Album Artist',
+      alternateArtist: 'Track Artist',
+      album: 'Album',
+    );
+    expect(miniPlayer.artwork?.albumId, 'spotify:track');
+    expect(downloads, 1);
+  });
+
   test('Eco on cellular plays a previously cached cover without provider access',
       () async {
     var requests = 0;
