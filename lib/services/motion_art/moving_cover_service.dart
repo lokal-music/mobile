@@ -63,15 +63,29 @@ class MovingCoverService {
     String? album,
     required AnimatedArtwork artwork,
     required bool preferVertical,
+    String? alternateArtist,
   }) async {
     if (await _ecoActive()) return;
     final settings = await MovingCoverSettings.load();
+    Future<bool> mayDownload() async => !await _ecoActive();
     await _offlineCache.remember(
       _offlineKey(title, artist, album ?? '', settings),
       artwork,
       preferVertical: preferVertical,
-      canDownload: () async => !await _ecoActive(),
+      canDownload: mayDownload,
     );
+    // A compact/album player may resolve using album artist while the full
+    // player uses track artist. Index the one downloaded clip under both
+    // identities without requesting the video a second time.
+    if (alternateArtist != null &&
+        motionName(alternateArtist) != motionName(artist)) {
+      await _offlineCache.remember(
+        _offlineKey(title, alternateArtist, album ?? '', settings),
+        artwork,
+        preferVertical: preferVertical,
+        canDownload: mayDownload,
+      );
+    }
   }
 
   Future<MotionArtLookup> lookup({
@@ -80,19 +94,31 @@ class MovingCoverService {
     String? album,
     Duration? duration,
     MovingCoverSettings? settings,
+    String? alternateArtist,
   }) async {
     final prefs = settings ?? await MovingCoverSettings.load();
     final cleanAlbum = motionAlbum(album);
     final key =
         '${motionName(title)}|${motionName(artist)}|${motionName(cleanAlbum)}|${prefs.order.join(',')}|${_apple.revision.value}|${SecureSpotifyTokenStore.sessionRevision.value}';
+    Future<AnimatedArtwork?> offlineArtwork() async {
+      final exact = await _offlineCache.find(
+        _offlineKey(title, artist, cleanAlbum, prefs),
+      );
+      if (exact != null) return exact;
+      if (alternateArtist == null ||
+          motionName(alternateArtist) == motionName(artist)) {
+        return null;
+      }
+      return _offlineCache.find(
+        _offlineKey(title, alternateArtist, cleanAlbum, prefs),
+      );
+    }
+
     // Eco is specifically a *cache-only* motion art policy on cellular.
     // Check before in-memory positive lookups: a URL isn't a downloaded clip.
     // Also bypass any in-flight online provider lookups started before Eco.
     if (await _ecoActive()) {
-      final offline = await _offlineCache.find(
-        _offlineKey(title, artist, cleanAlbum, prefs),
-      );
-      return MotionArtLookup(artwork: offline);
+      return MotionArtLookup(artwork: await offlineArtwork());
     }
     final cached = _cache[key];
     if (cached != null && cached.$1.isAfter(DateTime.now())) return cached.$2;
@@ -101,9 +127,7 @@ class MovingCoverService {
 
     // The completed local video is authoritative for offline playback. This
     // check runs before any Apple/Tidal/Spotify/provider HTTP request.
-    final offline = await _offlineCache.find(
-      _offlineKey(title, artist, cleanAlbum, prefs),
-    );
+    final offline = await offlineArtwork();
     if (offline != null) {
       final result = MotionArtLookup(artwork: offline);
       _cache[key] = (DateTime.now().add(const Duration(minutes: 30)), result);
