@@ -39,6 +39,14 @@ for (const link of [
 ]) {
   assert.ok(html.includes(link), 'Stable fallback missing: ' + link);
 }
+// Header social links must remain accessible and use the invite shared by both apps.
+const navActions = html.split('<div class="nav-actions">')[1]?.split('</div>')[0] ?? '';
+assert.match(navActions, /class="social-link github-link"/, 'GitHub header link is missing');
+assert.match(navActions, /viewBox="-1 -1 18 18"/, 'GitHub logo should have breathing room and avoid clipping');
+assert.match(navActions, /class="social-link discord-link"/, 'Discord header link is missing');
+assert.match(navActions, /aria-label="Join Lokal Music on Discord"/, 'Discord icon needs an accessible label');
+assert.ok(navActions.includes('https://discord.com/invite/8bUGWChwpG'), 'Header must use the app Discord invite');
+assert.match(css, /\.social-link svg \{[^}]*overflow:\s*visible/, 'Social icon SVGs should not clip');
 assert.match(css, /prefers-reduced-motion:\s*reduce/, 'Reduced-motion styles missing');
 assert.match(css, /:focus-visible/, 'Visible keyboard focus styles missing');
 assert.match(js, /IntersectionObserver/, 'Progressive reveal handler missing');
