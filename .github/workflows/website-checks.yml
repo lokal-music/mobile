@@ -1,0 +1,33 @@
+name: Website checks
+
+on:
+  pull_request:
+    paths:
+      - index.html
+      - site/**
+      - .github/workflows/website-checks.yml
+  push:
+    branches: [main]
+    paths:
+      - index.html
+      - site/**
+      - .github/workflows/website-checks.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  website:
+    name: Validate GitHub Pages website
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check JavaScript syntax
+        run: node --check site/main.js && node --check site/check.mjs
+      - name: Verify markup, assets and release fallbacks
+        run: node site/check.mjs
