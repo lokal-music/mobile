@@ -39,6 +39,7 @@ class MotionArtView extends StatefulWidget {
     required this.fallback,
     this.album,
     this.duration,
+    this.offlineArtistAlias,
     this.enabled = true,
     this.playbackActive = true,
     this.albumMode = false,
@@ -60,6 +61,10 @@ class MotionArtView extends StatefulWidget {
   final String artist;
   final String? album;
   final Duration? duration;
+
+  /// Alternate metadata identity for the same song (track vs album artist).
+  /// Only used for offline indexing; online provider matching is unchanged.
+  final String? offlineArtistAlias;
 
   /// Always rendered when no video is available or [enabled] is false.
   final Widget fallback;
@@ -393,6 +398,7 @@ class _MotionArtViewState extends State<MotionArtView>
         oldWidget.title != widget.title ||
         oldWidget.artist != widget.artist ||
         oldWidget.album != widget.album ||
+        oldWidget.offlineArtistAlias != widget.offlineArtistAlias ||
         oldWidget.albumMode != widget.albumMode ||
         oldWidget.representativeSongTitle != widget.representativeSongTitle ||
         oldWidget.preferVertical != widget.preferVertical ||
@@ -593,6 +599,7 @@ class _MotionArtViewState extends State<MotionArtView>
           artist: widget.artist,
           album: widget.albumMode ? widget.album ?? widget.title : widget.album,
           duration: widget.duration,
+          alternateArtist: widget.offlineArtistAlias,
         );
       } else if (widget.albumMode) {
         lookup = await service.lookupAnimatedArtworkForAlbum(
@@ -723,6 +730,7 @@ class _MotionArtViewState extends State<MotionArtView>
           album: widget.albumMode ? widget.album ?? widget.title : widget.album,
           artwork: artwork,
           preferVertical: widget.preferVertical,
+          alternateArtist: widget.offlineArtistAlias,
         ),
       );
     }
