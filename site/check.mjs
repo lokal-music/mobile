@@ -46,7 +46,7 @@ assert.match(navActions, /viewBox="-1 -1 18 18"/, 'GitHub logo should have breat
 assert.match(navActions, /class="social-link discord-link"/, 'Discord header link is missing');
 assert.match(navActions, /class="discord-label">Discord<\/span>/, 'Discord needs a visible desktop label');
 assert.match(navActions, /<svg width="24" height="24" viewBox="0 0 24 24"/, 'Discord glyph needs explicit dimensions even if CSS is stale');
-assert.match(html, /site\/styles\.css\?v=20261117-discord/, 'Cache-busted stylesheet required for header icons');
+assert.match(html, /site\/styles\.css\?v=20261117-mobile-hero/, 'Current stylesheet version must be requested');
 assert.match(css, /\.discord-link \{[^}]*display: inline-flex/, 'Discord header call-to-action needs visible desktop presentation');
 assert.match(navActions, /aria-label="Join Lokal Music on Discord"/, 'Discord icon needs an accessible label');
 assert.ok(navActions.includes('https://discord.com/invite/8bUGWChwpG'), 'Header must use the app Discord invite');
@@ -55,5 +55,13 @@ assert.match(css, /prefers-reduced-motion:\s*reduce/, 'Reduced-motion styles mis
 assert.match(css, /:focus-visible/, 'Visible keyboard focus styles missing');
 assert.match(js, /IntersectionObserver/, 'Progressive reveal handler missing');
 assert.match(js, /controller\.abort/, 'Release API timeout missing');
+
+// Phone hero: columns must be allowed to shrink, with bounded copy and balanced heading wraps.
+assert.match(css, /\.hero-grid \{ grid-template-columns: minmax\(0, 1fr\);/, 'Single-column hero must not grow beyond viewport');
+assert.match(css, /\.hero-content, \.hero-description, \.hero h1 \{ min-width: 0; max-width: 100% \}/, 'Hero copy must stay inside available mobile width');
+assert.match(css, /\.hero h1 \{ font-size: clamp\(36px, 10\.2vw, 58px\)/, 'Mobile heading needs a fluid font size');
+assert.match(html, /Android phones &amp; tablets/, 'Android tablets should be mentioned');
+assert.match(html, /iPhone &amp; iPad/, 'iPads should be mentioned');
+assert.match(html, /Can I use Lokal on a tablet or iPad\?/, 'Tablet compatibility FAQ missing');
 
 console.log('Lokal website static checks passed.');
