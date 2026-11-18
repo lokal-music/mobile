@@ -198,6 +198,7 @@ class _MotionArtViewState extends State<MotionArtView>
   bool _loading = false;
   bool _ecoReady = false;
   bool _ecoActive = false;
+  bool _offlineActive = false;
   int _ecoCheckVersion = 0;
   bool get _suspendedForMemoryPressure =>
       MotionArtMemoryPressure.instance.isSuspended;
@@ -275,8 +276,12 @@ class _MotionArtViewState extends State<MotionArtView>
       devLog('[MotionArt] Eco policy unavailable: $error');
       active = false;
     }
+    // A disconnected device must not borrow an online decoder or try a
+    // provider URL from an earlier successful lookup.
+    final offline = await EcoDataMode.isOffline();
     if (!mounted || version != _ecoCheckVersion) return;
     _ecoActive = active;
+    _offlineActive = offline;
     _ecoReady = true;
     _restart();
     setState(() {});
@@ -511,7 +516,9 @@ class _MotionArtViewState extends State<MotionArtView>
       // active. Reuse an already-decoded local file where possible.
       final lease = _playbackPool.acquireExisting(
         key,
-        allow: (controller) => !_ecoActive || _cachedSource[controller] != null,
+        allow: (controller) =>
+            (!_ecoActive && !_offlineActive) ||
+            _cachedSource[controller] != null,
       );
       if (lease != null) {
         _timer?.cancel();
@@ -630,9 +637,9 @@ class _MotionArtViewState extends State<MotionArtView>
           );
     if (!mounted || generation != _generation || !_canPlay) return;
     final url = playable?.url;
-    if (_ecoActive && playable?.cachedSource == null) {
-      // A provider may have resolved online immediately before Eco switched.
-      // Only a fully downloaded file may be opened in this mode.
+    if ((_ecoActive || _offlineActive) && playable?.cachedSource == null) {
+      // Never hand a stale streaming URL to AVPlayer/ExoPlayer in airplane
+      // mode or cellular Eco; only complete local media is allowed.
       _settle();
       return;
     }
@@ -647,6 +654,30 @@ class _MotionArtViewState extends State<MotionArtView>
         _settle();
       }
       return;
+    }
+
+    // Download independently of native video initialization. Previously the
+    // cache only began *after* the decoder started, leaving no saved clip if
+    // initialization failed or the player route was replaced early.
+    // Lookups used by the footer do not warm media: only the active video
+    // surface may cause a bounded background download.
+    if (playable?.cachedSource == null &&
+        widget.serviceOverride == null &&
+        artwork != null &&
+        !_ecoActive &&
+        !_offlineActive) {
+      unawaited(
+        MovingCoverService.instance.cachePlayedClip(
+          title: widget.albumMode
+              ? widget.representativeSongTitle ?? widget.title
+              : widget.title,
+          artist: widget.artist,
+          album: widget.albumMode ? widget.album ?? widget.title : widget.album,
+          artwork: artwork,
+          preferVertical: widget.preferVertical,
+          alternateArtist: widget.offlineArtistAlias,
+        ),
+      );
     }
 
     VideoPlayerController? controller;
@@ -692,11 +723,12 @@ class _MotionArtViewState extends State<MotionArtView>
       if (playable?.cachedSource case final String source) {
         // Corrupted or unsupported local HLS should never trap the player in
         // repeated attempts against the same file. Retry the original URL.
-        await MotionArtOfflineCache.instance.discard(source);
-        if (_ecoActive) {
-          // No network retry for an unusable cached clip on cellular Eco.
+        if (_ecoActive || _offlineActive) {
+          // Keep the completed clip: a transient native decoder failure
+          // during airplane mode must not erase the only offline copy.
           _settle();
         } else {
+          await MotionArtOfflineCache.instance.discard(source);
           _retryTimer?.cancel();
           _retryTimer = Timer(const Duration(milliseconds: 400), () {
             if (mounted) _beginLoad();
@@ -718,21 +750,6 @@ class _MotionArtViewState extends State<MotionArtView>
     if (playable?.cachedSource case final String source) {
       _cachedSource[controller] = source;
       MotionArtOfflineCache.instance.retain(source);
-    } else if (widget.serviceOverride == null && artwork != null) {
-      // The streamed first frame is already playing. Cache asynchronously so
-      // revisiting this song (including after restart) works without network.
-      unawaited(
-        MovingCoverService.instance.cachePlayedClip(
-          title: widget.albumMode
-              ? widget.representativeSongTitle ?? widget.title
-              : widget.title,
-          artist: widget.artist,
-          album: widget.albumMode ? widget.album ?? widget.title : widget.album,
-          artwork: artwork,
-          preferVertical: widget.preferVertical,
-          alternateArtist: widget.offlineArtistAlias,
-        ),
-      );
     }
     _spotifyCanvas[controller] = artwork!.albumId.startsWith('spotify:');
     final previous = _controller;
