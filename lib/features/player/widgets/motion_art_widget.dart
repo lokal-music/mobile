@@ -48,6 +48,7 @@ class MotionArtView extends StatefulWidget {
     this.fit = BoxFit.cover,
     this.borderRadius,
     this.suppressionOverride,
+    this.offlineOverride,
     this.serviceOverride,
     this.loadingFallback,
     this.sharedPlaybackKey,
@@ -101,6 +102,11 @@ class MotionArtView extends StatefulWidget {
   /// Test hook: replaces [PlayerService.motionArtSuppressedNotifier].
   @visibleForTesting
   final ValueListenable<bool>? suppressionOverride;
+
+  /// Test hook: model an explicitly online/offline native device when
+  /// the Flutter test runner has no platform connectivity channel.
+  @visibleForTesting
+  final Future<bool> Function()? offlineOverride;
 
   /// Test hook: replaces the shared [AnimatedArtworkService] instance.
   @visibleForTesting
@@ -278,7 +284,8 @@ class _MotionArtViewState extends State<MotionArtView>
     }
     // A disconnected device must not borrow an online decoder or try a
     // provider URL from an earlier successful lookup.
-    final offline = await EcoDataMode.isOffline();
+    final offline =
+        await (widget.offlineOverride ?? EcoDataMode.isOffline)();
     if (!mounted || version != _ecoCheckVersion) return;
     _ecoActive = active;
     _offlineActive = offline;
