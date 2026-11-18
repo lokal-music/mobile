@@ -22,10 +22,12 @@ class MovingCoverService {
     SpotifyCanvasService? spotify,
     MotionArtOfflineCache? offlineCache,
     Future<bool> Function()? ecoActive,
+    Future<bool> Function()? offline,
   }) : _client = client ?? GracefulHttpClient(),
        _apple = apple ?? AnimatedArtworkService.instance,
        _offlineCache = offlineCache ?? MotionArtOfflineCache.instance,
-       _ecoActive = ecoActive ?? EcoDataMode.activeOnCellular {
+       _ecoActive = ecoActive ?? EcoDataMode.activeOnCellular,
+       _offline = offline ?? EcoDataMode.isOffline {
     _spotify = spotify ?? SpotifyCanvasService(client: _client);
   }
   static final instance = MovingCoverService();
@@ -33,6 +35,7 @@ class MovingCoverService {
   final AnimatedArtworkService _apple;
   final MotionArtOfflineCache _offlineCache;
   final Future<bool> Function() _ecoActive;
+  final Future<bool> Function() _offline;
   late final SpotifyCanvasService _spotify;
   final _cache = <String, (DateTime, MotionArtLookup)>{};
   final _jobs = <String, Future<MotionArtLookup>>{};
@@ -44,10 +47,19 @@ class MovingCoverService {
   static const _ua =
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0.0.0 Safari/537.36';
 
-  /// Disk lookup keys deliberately exclude in-process revision counters, so
-  /// cached clips survive app restarts and Spotify session refreshes. They do
-  /// include the enabled source order so source preference changes are obeyed.
+  /// Stable per-source indexes survive changes to provider priority, session
+  /// renewal and airplane mode. Other providers stay opt-in: a cached Spotify
+  /// Canvas must not override Apple when Spotify is disabled in Appearance.
   String _offlineKey(
+    String title,
+    String artist,
+    String album,
+    String source,
+  ) => 'v2|${motionName(title)}|${motionName(artist)}|'
+      '${motionName(motionAlbum(album))}|$source';
+
+  /// Read older completed caches without forcing users to re-download clips.
+  String _legacyOfflineKey(
     String title,
     String artist,
     String album,
@@ -55,8 +67,14 @@ class MovingCoverService {
   ) => 'v1|${motionName(title)}|${motionName(artist)}|'
       '${motionName(motionAlbum(album))}|${settings.order.join(',')}';
 
-  /// Persist the clip only after a player has successfully initialized it.
-  /// Streaming remains responsive; failed downloads never block playback.
+  static String _artworkSource(AnimatedArtwork artwork) {
+    final prefix = artwork.albumId.split(':').first;
+    return movingCoverSources.containsKey(prefix) ? prefix : 'apple';
+  }
+
+  /// Start warming a chosen playback clip while its native decoder opens.
+  /// It remains bounded and runs off the first-frame path; only completed
+  /// content receives a durable index. Never issue downloads in airplane mode.
   Future<void> cachePlayedClip({
     required String title,
     required String artist,
@@ -65,22 +83,24 @@ class MovingCoverService {
     required bool preferVertical,
     String? alternateArtist,
   }) async {
-    if (await _ecoActive()) return;
+    if (await _ecoActive() || await _offline()) return;
+    final source = _artworkSource(artwork);
     final settings = await MovingCoverSettings.load();
-    Future<bool> mayDownload() async => !await _ecoActive();
+    if (!settings.sources.contains(source)) return;
+    Future<bool> mayDownload() async =>
+        !await _ecoActive() && !await _offline();
     await _offlineCache.remember(
-      _offlineKey(title, artist, album ?? '', settings),
+      _offlineKey(title, artist, album ?? '', source),
       artwork,
       preferVertical: preferVertical,
       canDownload: mayDownload,
     );
-    // A compact/album player may resolve using album artist while the full
-    // player uses track artist. Index the one downloaded clip under both
-    // identities without requesting the video a second time.
+    // Album artist, song artist and fullscreen player can have different
+    // lookup identities. Point them to the same completed on-disk clip.
     if (alternateArtist != null &&
         motionName(alternateArtist) != motionName(artist)) {
       await _offlineCache.remember(
-        _offlineKey(title, alternateArtist, album ?? '', settings),
+        _offlineKey(title, alternateArtist, album ?? '', source),
         artwork,
         preferVertical: preferVertical,
         canDownload: mayDownload,
@@ -101,23 +121,37 @@ class MovingCoverService {
     final key =
         '${motionName(title)}|${motionName(artist)}|${motionName(cleanAlbum)}|${prefs.order.join(',')}|${_apple.revision.value}|${SecureSpotifyTokenStore.sessionRevision.value}';
     Future<AnimatedArtwork?> offlineArtwork() async {
-      final exact = await _offlineCache.find(
-        _offlineKey(title, artist, cleanAlbum, prefs),
-      );
-      if (exact != null) return exact;
-      if (alternateArtist == null ||
-          motionName(alternateArtist) == motionName(artist)) {
-        return null;
+      for (final source in prefs.order) {
+        for (final candidate in {
+          artist,
+          if (alternateArtist != null) alternateArtist,
+        }) {
+          final artwork = await _offlineCache.find(
+            _offlineKey(title, candidate, cleanAlbum, source),
+          );
+          if (artwork != null && _artworkSource(artwork) == source) {
+            return artwork;
+          }
+        }
       }
-      return _offlineCache.find(
-        _offlineKey(title, alternateArtist, cleanAlbum, prefs),
-      );
+      // Legacy v1 files include the full source list in their hash.
+      for (final candidate in {
+        artist,
+        if (alternateArtist != null) alternateArtist,
+      }) {
+        final artwork = await _offlineCache.find(
+          _legacyOfflineKey(title, candidate, cleanAlbum, prefs),
+        );
+        if (artwork != null && prefs.sources.contains(_artworkSource(artwork))) {
+          return artwork;
+        }
+      }
+      return null;
     }
 
-    // Eco is specifically a *cache-only* motion art policy on cellular.
-    // Check before in-memory positive lookups: a URL isn't a downloaded clip.
-    // Also bypass any in-flight online provider lookups started before Eco.
-    if (await _ecoActive()) {
+    // Airplane mode and cellular Eco are cache-only, even if the in-memory
+    // online lookup previously succeeded with a now-unusable provider URL.
+    if (await _ecoActive() || await _offline()) {
       return MotionArtLookup(artwork: await offlineArtwork());
     }
     final cached = _cache[key];
