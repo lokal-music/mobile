@@ -229,6 +229,34 @@ class MotionArtOfflineCache {
     }
   }
 
+  /// Upgrade an earlier lookup index using the existing complete media,
+  /// without making a request. Useful when a user has since reordered the
+  /// enabled motion-art sources.
+  Future<bool> indexExisting(String key, AnimatedArtwork artwork) async {
+    for (final source in {
+      if (artwork.playbackUrl != null) artwork.playbackUrl!,
+      if (artwork.verticalPlaybackUrl != null) artwork.verticalPlaybackUrl!,
+    }) {
+      if (await localFile(source) != null) {
+        try {
+          final file = await _lookupFile(key);
+          final temp = File('${file.path}.tmp');
+          await temp.writeAsString(
+            jsonEncode({'artwork': artwork.toJson()}),
+            flush: true,
+          );
+          if (await file.exists()) await file.delete();
+          await temp.rename(file.path);
+          return true;
+        } catch (error) {
+          devLog('[MotionArt] offline index migration failed: $error');
+          return false;
+        }
+      }
+    }
+    return false;
+  }
+
   Future<File?> _ensureClip(
     String url, {
     Future<bool> Function()? canDownload,
