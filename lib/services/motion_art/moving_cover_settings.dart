@@ -48,6 +48,8 @@ class MovingCoverSettings {
 }
 
 class MovingCoverSettingsNotifier extends Notifier<MovingCoverSettings> {
+  int _mutationEpoch = 0;
+
   @override
   MovingCoverSettings build() {
     unawaited(_load());
@@ -55,8 +57,11 @@ class MovingCoverSettingsNotifier extends Notifier<MovingCoverSettings> {
   }
 
   Future<void> _load() async {
+    final epoch = _mutationEpoch;
     final saved = await MovingCoverSettings.load();
-    if (ref.mounted) state = saved;
+    // A footer tap can arrive before preferences hydration completes. Do not
+    // let that older load undo a newly saved Cover toggle.
+    if (ref.mounted && epoch == _mutationEpoch) state = saved;
   }
 
   Future<void> setSource(String id, bool enabled) async {
@@ -100,6 +105,7 @@ class MovingCoverSettingsNotifier extends Notifier<MovingCoverSettings> {
 
   Future<void> _save(MovingCoverSettings settings) async {
     final sourcesChanged = state.order.join(',') != settings.order.join(',');
+    _mutationEpoch++;
     state = settings;
     final p = await SharedPreferences.getInstance();
     await p.setStringList('lokal.motion.sources', settings.sources.toList());
