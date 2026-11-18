@@ -16,6 +16,7 @@ typedef MovingCoverAvailabilityKey = ({
   int sourceRevision,
   int spotifySessionRevision,
   int artworkRevision,
+  int networkRevision,
 });
 
 typedef MovingCoverLookup = Future<MotionArtLookup> Function({
