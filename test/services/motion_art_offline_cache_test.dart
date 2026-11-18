@@ -105,7 +105,7 @@ void main() {
       title: 'Track',
       artist: 'Artist',
       album: 'Album',
-      settings: const MovingCoverSettings(),
+      settings: const MovingCoverSettings(sources: {'spotify'}),
     );
     expect(result.artwork?.playbackUrl, mp4.playbackUrl);
     expect(result.transient, isFalse);
@@ -149,6 +149,7 @@ void main() {
       title: 'Track',
       artist: 'Track Artist',
       album: 'Album',
+      settings: const MovingCoverSettings(sources: {'spotify'}),
     );
     expect(fullPlayer.artwork?.albumId, 'spotify:track');
 
@@ -157,6 +158,7 @@ void main() {
       artist: 'Album Artist',
       alternateArtist: 'Track Artist',
       album: 'Album',
+      settings: const MovingCoverSettings(sources: {'spotify'}),
     );
     expect(miniPlayer.artwork?.albumId, 'spotify:track');
     expect(downloads, 1);
@@ -193,7 +195,7 @@ void main() {
       title: 'Track',
       artist: 'Artist',
       album: 'Album',
-      settings: const MovingCoverSettings(),
+      settings: const MovingCoverSettings(sources: {'spotify'}),
     );
     expect(result.artwork?.animatedUrl, mp4.animatedUrl);
     final playable = await cache.playable(result.artwork!, preferVertical: false);
