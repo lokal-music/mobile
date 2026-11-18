@@ -3094,6 +3094,7 @@ class _FullPlayerScreenState extends ConsumerState<FullPlayerScreen>
                     movingCoverRevision,
                     SecureSpotifyTokenStore.sessionRevision,
                     AnimatedArtworkService.instance.revision,
+                    EcoDataMode.revision,
                   ]),
                   builder: (context, _) => Consumer(
                     builder: (context, coverRef, _) {
@@ -3108,6 +3109,7 @@ class _FullPlayerScreenState extends ConsumerState<FullPlayerScreen>
                               SecureSpotifyTokenStore.sessionRevision.value,
                           artworkRevision:
                               AnimatedArtworkService.instance.revision.value,
+                          networkRevision: EcoDataMode.revision.value,
                         )),
                       );
                       if (available.value != true)
