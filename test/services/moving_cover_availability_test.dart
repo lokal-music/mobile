@@ -11,6 +11,7 @@ const _song = (
   sourceRevision: 0,
   spotifySessionRevision: 0,
   artworkRevision: 0,
+  networkRevision: 0,
 );
 
 MotionArtLookup _motion(String source) => MotionArtLookup(
@@ -111,6 +112,7 @@ void main() {
           sourceRevision: 0,
           spotifySessionRevision: 0,
           artworkRevision: 0,
+  networkRevision: 0,
         ),
         settings: settings,
         lookup: lookup,
