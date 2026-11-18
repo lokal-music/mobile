@@ -394,4 +394,89 @@ void main() {
     expect(offline?.cachedSource, artwork.playbackUrl);
     expect(Uri.parse(offline!.url).scheme, 'file');
   });
+  test('airplane mode bypasses memoized streaming lookup after clip eviction',
+      () async {
+    var offline = false;
+    var providerRequests = 0;
+    final cache = MotionArtOfflineCache.create(
+      directory: directory,
+      client: MockClient((_) async => http.Response('canvas bytes', 200)),
+    );
+    final service = MovingCoverService(
+      offlineCache: cache,
+      offline: () async => offline,
+      ecoActive: () async => false,
+      client: MockClient((request) async {
+        providerRequests++;
+        throw StateError('No provider HTTP is permitted offline: $request');
+      }),
+    );
+    await service.cachePlayedClip(
+      title: 'Track',
+      artist: 'Artist',
+      album: 'Album',
+      artwork: mp4,
+      preferVertical: false,
+    );
+    const spotifyOnly = MovingCoverSettings(sources: {'spotify'});
+    expect(
+      (await service.lookup(
+        title: 'Track', artist: 'Artist', album: 'Album',
+        settings: spotifyOnly,
+      )).artwork,
+      isNotNull,
+    );
+    await cache.discard(mp4.playbackUrl!);
+    offline = true;
+    final disconnected = await service.lookup(
+      title: 'Track', artist: 'Artist', album: 'Album',
+      settings: spotifyOnly,
+    );
+    expect(disconnected.artwork, isNull,
+        reason: 'A memoized remote Canvas URL is not an offline video');
+    expect(disconnected.transient, isFalse);
+    expect(providerRequests, 0);
+  });
+
+  test('saved Spotify Canvas survives provider reorder but not source disable',
+      () async {
+    var offline = false;
+    final cache = MotionArtOfflineCache.create(
+      directory: directory,
+      client: MockClient((_) async => http.Response('canvas bytes', 200)),
+    );
+    final service = MovingCoverService(
+      offlineCache: cache,
+      ecoActive: () async => false,
+      offline: () async => offline,
+      client: MockClient((request) async =>
+          throw StateError('Provider must not be called: $request')),
+    );
+    await service.cachePlayedClip(
+      title: 'Track', artist: 'Artist', album: 'Album',
+      artwork: mp4, preferVertical: false,
+    );
+    offline = true;
+    final changedPriority = await service.lookup(
+      title: 'Track', artist: 'Artist', album: 'Album',
+      settings: const MovingCoverSettings(
+        sources: {'spotify', 'apple'},
+        spotifyFirst: true,
+      ),
+    );
+    expect(changedPriority.artwork?.albumId, 'spotify:track');
+    final playable = await cache.playable(
+      changedPriority.artwork!, preferVertical: false,
+    );
+    expect(Uri.parse(playable!.url).scheme, 'file');
+    expect(playable.cachedSource, mp4.playbackUrl);
+
+    final disabled = await service.lookup(
+      title: 'Track', artist: 'Artist', album: 'Album',
+      settings: const MovingCoverSettings(sources: {'apple'}),
+    );
+    expect(disabled.artwork, isNull,
+        reason: 'An explicitly disabled Canvas source stays disabled');
+  });
+
 }
