@@ -479,4 +479,36 @@ void main() {
         reason: 'An explicitly disabled Canvas source stays disabled');
   });
 
+  test('legacy order-dependent offline clips migrate with no network', () async {
+    final cache = MotionArtOfflineCache.create(
+      directory: directory,
+      client: MockClient((_) async => http.Response('old canvas', 200)),
+    );
+    await cache.remember(
+      'v1|track|artist|album|apple,spotify',
+      mp4,
+      preferVertical: false,
+    );
+    expect(await cache.find('v2|track|artist|album|spotify'), isNull);
+
+    final service = MovingCoverService(
+      offlineCache: cache,
+      ecoActive: () async => false,
+      offline: () async => true,
+      client: MockClient((request) async =>
+          throw StateError('No provider request allowed: $request')),
+    );
+    final oldCanvas = await service.lookup(
+      title: 'Track',
+      artist: 'Artist',
+      album: 'Album',
+      settings: const MovingCoverSettings(
+        sources: {'apple', 'spotify'},
+        spotifyFirst: true,
+      ),
+    );
+    expect(oldCanvas.artwork?.albumId, 'spotify:track');
+    expect(await cache.find('v2|track|artist|album|spotify'), isNotNull);
+  });
+
 }
