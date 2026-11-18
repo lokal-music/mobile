@@ -85,8 +85,6 @@ class MovingCoverService {
   }) async {
     if (await _ecoActive() || await _offline()) return;
     final source = _artworkSource(artwork);
-    final settings = await MovingCoverSettings.load();
-    if (!settings.sources.contains(source)) return;
     Future<bool> mayDownload() async =>
         !await _ecoActive() && !await _offline();
     await _offlineCache.remember(
