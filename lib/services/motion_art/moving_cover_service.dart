@@ -85,8 +85,18 @@ class MovingCoverService {
   }) async {
     if (await _ecoActive() || await _offline()) return;
     final source = _artworkSource(artwork);
-    Future<bool> mayDownload() async =>
-        !await _ecoActive() && !await _offline();
+    // The downloader asks permission for every streamed chunk. Checking the
+    // platform connectivity channel for each chunk stalls larger Canvas/HLS
+    // downloads. Recheck transport only after a reported network transition.
+    var checkedRevision = EcoDataMode.revision.value;
+    var connected = true;
+    Future<bool> mayDownload() async {
+      if (EcoDataMode.revision.value != checkedRevision) {
+        checkedRevision = EcoDataMode.revision.value;
+        connected = !await _offline();
+      }
+      return connected && !await _ecoActive();
+    }
     await _offlineCache.remember(
       _offlineKey(title, artist, album ?? '', source),
       artwork,
