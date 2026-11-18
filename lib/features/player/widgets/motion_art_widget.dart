@@ -275,6 +275,10 @@ class _MotionArtViewState extends State<MotionArtView>
 
   Future<void> _checkEco() async {
     final version = ++_ecoCheckVersion;
+    // Query transport concurrently with Eco preferences so a warm decoder
+    // can be leased without waiting an extra frame for a second platform call.
+    final offlineRequest =
+        (widget.offlineOverride ?? EcoDataMode.isOffline)();
     bool active;
     try {
       active = await EcoDataMode.activeOnCellular();
@@ -284,8 +288,13 @@ class _MotionArtViewState extends State<MotionArtView>
     }
     // A disconnected device must not borrow an online decoder or try a
     // provider URL from an earlier successful lookup.
-    final offline =
-        await (widget.offlineOverride ?? EcoDataMode.isOffline)();
+    bool offline;
+    try {
+      offline = await offlineRequest;
+    } catch (error) {
+      devLog('[MotionArt] connectivity policy unavailable: $error');
+      offline = false;
+    }
     if (!mounted || version != _ecoCheckVersion) return;
     _ecoActive = active;
     _offlineActive = offline;
