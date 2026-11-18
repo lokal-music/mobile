@@ -101,6 +101,7 @@ void main() {
                           artist: song.artist,
                           sharedPlaybackKey: 'player:track',
                           sharedPlaybackOverride: pool,
+              offlineOverride: () async => false,
                           suppressionOverride: suppression,
                           onFrame: (frame) =>
                               source.update('player:track', frame),
