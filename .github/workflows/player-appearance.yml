@@ -3,6 +3,11 @@ on:
   pull_request:
     paths:
       - 'lib/features/player/**'
+      - 'lib/services/motion_art/**'
+      - 'lib/services/playback_source_priority.dart'
+      - 'test/services/motion_art_offline_cache_test.dart'
+      - 'test/services/moving_cover_availability_test.dart'
+      - 'test/services/eco_data_mode_test.dart'
       - 'lib/features/settings/lokal/groups/appearance_group.dart'
       - 'lib/models/progress_bar_style.dart'
       - 'lib/providers/*waveform*'
@@ -35,7 +40,7 @@ permissions:
 jobs:
   player-appearance:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -55,7 +60,7 @@ jobs:
           lib/features/player lib/features/settings/lokal/groups/appearance_group.dart
           lib/providers/full_player_waveform_provider.dart lib/providers/progress_bar_style_provider.dart
           lib/services/audio_analysis_queue.dart lib/services/song_waveform_service.dart
-          lib/services/motion_art
+          lib/services/motion_art lib/services/playback_source_priority.dart
       - name: Verify seeking, persistence, layouts and localization
         run: >-
           flutter test --no-pub
@@ -82,4 +87,5 @@ jobs:
           test/widgets/motion_art_loading_fallback_test.dart
           test/services/shared_motion_playback_test.dart
           test/services/motion_art_offline_cache_test.dart
+          test/services/moving_cover_availability_test.dart
       - run: git diff --exit-code -- pubspec.lock
