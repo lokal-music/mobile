@@ -116,6 +116,7 @@ class MovingCoverService {
   }) async {
     final prefs = settings ?? await MovingCoverSettings.load();
     final cleanAlbum = motionAlbum(album);
+    final cacheOnly = await _ecoActive() || await _offline();
     final key =
         '${motionName(title)}|${motionName(artist)}|${motionName(cleanAlbum)}|${prefs.order.join(',')}|${_apple.revision.value}|${SecureSpotifyTokenStore.sessionRevision.value}';
     Future<AnimatedArtwork?> offlineArtwork() async {
@@ -144,12 +145,52 @@ class MovingCoverService {
           return artwork;
         }
       }
+      if (cacheOnly) {
+        // v1 hashed the *whole* source list. Rebuild only plausible historic
+        // orders (five sources, Spotify-first optional) so existing downloads
+        // aren't stranded when a user adjusts Appearance before going offline.
+        // A successful match is reindexed under v2, making this a one-off cost.
+        final ids = movingCoverSources.keys.toList();
+        for (var mask = 1; mask < (1 << ids.length); mask++) {
+          final enabled = {
+            for (var i = 0; i < ids.length; i++)
+              if ((mask & (1 << i)) != 0) ids[i],
+          };
+          for (final spotifyFirst in [
+            false,
+            if (enabled.contains('spotify')) true,
+          ]) {
+            final oldSettings = MovingCoverSettings(
+              sources: enabled,
+              spotifyFirst: spotifyFirst,
+            );
+            if (oldSettings.order.join(',') == prefs.order.join(',')) continue;
+            for (final candidate in {
+              artist,
+              if (alternateArtist != null) alternateArtist,
+            }) {
+              final artwork = await _offlineCache.find(
+                _legacyOfflineKey(title, candidate, cleanAlbum, oldSettings),
+              );
+              if (artwork == null ||
+                  !prefs.sources.contains(_artworkSource(artwork))) continue;
+              await _offlineCache.indexExisting(
+                _offlineKey(
+                  title, candidate, cleanAlbum, _artworkSource(artwork),
+                ),
+                artwork,
+              );
+              return artwork;
+            }
+          }
+        }
+      }
       return null;
     }
 
     // Airplane mode and cellular Eco are cache-only, even if the in-memory
     // online lookup previously succeeded with a now-unusable provider URL.
-    if (await _ecoActive() || await _offline()) {
+    if (cacheOnly) {
       return MotionArtLookup(artwork: await offlineArtwork());
     }
     final cached = _cache[key];
