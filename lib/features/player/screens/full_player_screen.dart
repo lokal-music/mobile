@@ -35,6 +35,7 @@ import '../widgets/lyrics_save_button.dart';
 import '../widgets/player_panel_stage.dart';
 import '../widgets/motion_art_widget.dart';
 
+import 'package:flick/services/playback_source_priority.dart';
 import 'package:flick/services/motion_art/moving_cover_settings.dart';
 import 'package:flick/services/motion_art/moving_cover_availability.dart';
 import 'package:flick/services/motion_art/animated_artwork_service.dart';
