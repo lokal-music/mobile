@@ -64,6 +64,21 @@ abstract final class EcoDataMode {
       return false;
     }
   }
+
+  /// Airplane mode/no transport must use fully saved motion clips, not a
+  /// memoized provider URL. This deliberately does not treat Wi-Fi without
+  /// Internet as definitively offline: connectivity_plus reports transports,
+  /// not end-to-end Internet reachability.
+  static Future<bool> isOffline() async {
+    try {
+      final transports = await Connectivity().checkConnectivity();
+      return transports.isEmpty ||
+          transports.every((transport) => transport == ConnectivityResult.none);
+    } catch (_) {
+      // Some platforms/tests do not expose a connectivity plugin.
+      return false;
+    }
+  }
 }
 
 abstract final class PlaybackSourcePriority {
