@@ -2,6 +2,8 @@
 # Extended simulator/WebKit acceptance can be requested for a qualification run.
 name: iPhone build and sideload package
 'on':
+  push:
+    branches: ['codex/build-compact-queue']
   workflow_dispatch:
     inputs:
       bump:
