@@ -66,6 +66,93 @@ void main() {
     },
   );
 
+  test(
+    'stops after backgrounding and acknowledges every unattempted ID',
+    () async {
+      var foreground = true;
+      final copied = <String>[];
+      final result = await copyDesktopCatalogueTracks(
+        requestedIds: ['one', 'two', 'three'],
+        loadCatalogue: () async => [
+          {'id': 'one'},
+          {'id': 'two'},
+          {'id': 'three'},
+        ],
+        isAlreadyPresent: (id) async {
+          if (id == 'two') foreground = false;
+          return false;
+        },
+        copyTrack: (track) async => copied.add(track['id']! as String),
+        shouldContinue: () => foreground,
+      );
+
+      expect(copied, ['one']);
+      expect(result.unattemptedIds, ['two', 'three']);
+      expect(
+        desktopTrackCopyFailureAck(
+          error: 'Transfer interrupted.',
+          unattemptedIds: result.unattemptedIds,
+        ),
+        {
+          'ok': false,
+          'error': 'Transfer interrupted.',
+          'unattemptedIds': ['two', 'three'],
+        },
+      );
+      expect(
+        desktopTrackCopyFailureAck(
+          error: 'Transfer interrupted.',
+          unattemptedIds: List.generate(120, (index) => '$index'),
+        )['unattemptedIds'],
+        hasLength(maxDesktopTracksToCopy),
+      );
+    },
+  );
+
+  test('a downloaded original skips audio but retries both sidecars', () async {
+    var audioCopies = 0, clipRetries = 0, lyricRetries = 0;
+    await expectLater(
+      copyDesktopOriginalAndSidecars(
+        hasDownloadedOriginal: true,
+        copyAudio: () async {
+          audioCopies++;
+        },
+        retrySidecars: () => retryDesktopTrackSidecars(
+          copyClip: () async {
+            clipRetries++;
+            throw StateError('Clip transfer failed.');
+          },
+          syncLyrics: () async {
+            lyricRetries++;
+          },
+        ),
+      ),
+      throwsStateError,
+    );
+    expect(audioCopies, 0);
+    expect(clipRetries, 1);
+    expect(lyricRetries, 1);
+  });
+
+  test(
+    'does not resolve the catalogue when the app is already backgrounded',
+    () async {
+      var catalogueLoaded = false;
+      final result = await copyDesktopCatalogueTracks(
+        requestedIds: ['one', 'two'],
+        loadCatalogue: () async {
+          catalogueLoaded = true;
+          return [];
+        },
+        isAlreadyPresent: (_) async => false,
+        copyTrack: (_) async {},
+        shouldContinue: () => false,
+      );
+      expect(catalogueLoaded, isFalse);
+      expect(result.unattemptedIds, ['one', 'two']);
+    },
+  );
+
   test('validates before loading desktop catalogue', () async {
     var loaded = false;
     await expectLater(

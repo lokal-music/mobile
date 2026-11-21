@@ -64,6 +64,7 @@ class LokalLinkService {
   StreamSubscription<dynamic>? _subscription;
   bool _closed = false;
   int _epoch = 0;
+  int get connectionGeneration => _epoch;
   Stream<LinkMessage> get messages => _messages.stream;
   Stream<bool> get connections => _connections.stream;
   bool get connected => _socket?.readyState == WebSocket.open;
@@ -315,6 +316,7 @@ class LokalLinkService {
 
   void _lost(WebSocket socket) {
     if (!identical(_socket, socket)) return;
+    ++_epoch;
     _socket = null;
     _failRequests();
     if (!_closed) _connections.add(false);

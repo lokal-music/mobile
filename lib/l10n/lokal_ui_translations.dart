@@ -1,9 +1,31 @@
 // Generated Lokal presentation phrases. Music metadata and route IDs are not localized here.
 const Map<String, String> _uifr = {
+  "Preparing {arg0} songs from desktop…":
+      "Préparation de {arg0} morceaux depuis l’ordinateur…",
+  "Copying {arg0} of {arg1} songs from desktop…":
+      "Copie de {arg0} morceaux sur {arg1} depuis l’ordinateur…",
+  "Copied {arg0} of {arg1} songs from desktop. {arg2}{arg3}":
+      "{arg0} morceaux sur {arg1} copiés depuis l’ordinateur. {arg2}{arg3}",
+  "Copied {arg0} songs from desktop.{arg1}":
+      "{arg0} morceaux copiés depuis l’ordinateur.{arg1}",
+  " {arg0} already on this phone.": " {arg0} déjà sur ce téléphone.",
+  "; and {arg0} more": "; et {arg0} de plus",
+  "Lokal moved to background; remaining tracks were not started.": "Lokal est passé en arrière-plan ; les morceaux restants n’ont pas été copiés.",
+  "Desktop transfer failed: {arg0}":
+      "Échec du transfert depuis l’ordinateur : {arg0}",
+  "Choose between 1 and 100 desktop songs to copy.":
+      "Choisissez entre 1 et 100 morceaux de l’ordinateur à copier.",
+  "The desktop song list is invalid.":
+      "La liste de morceaux de l’ordinateur est invalide.",
+  "Keep Lokal open in the foreground to copy songs.":
+      "Gardez Lokal ouvert au premier plan pour copier les morceaux.",
+  "Reconnect to your paired desktop to copy songs.":
+      "Reconnectez-vous à votre ordinateur associé pour copier des morceaux.",
   "Full player seekbar": "Barre de progression du lecteur",
   "Line, Wavy or Waveform. Waveform uses the song’s audio when available, with a line fallback.": "Ligne, ondulée ou forme d’onde. La forme d’onde utilise l’audio du morceau si disponible, sinon une ligne.",
   "Wavy": "Ondulée",
-  "A gentle wave along the played part of the track.": "Une onde douce sur la partie déjà lue du morceau.",
+  "A gentle wave along the played part of the track.":
+      "Une onde douce sur la partie déjà lue du morceau.",
   "Forget": "Oublier",
   "Reverse song swipe actions": "Inverser les gestes sur les morceaux",
   "Swipe right to Play next, left to Add to queue.":
@@ -696,10 +718,30 @@ const Map<String, String> _uifr = {
   "“{arg0}” plays next": "\"{arg0}\" joue ensuite",
 };
 const Map<String, String> _uide = {
+  "Preparing {arg0} songs from desktop…":
+      "{arg0} Songs vom Desktop werden vorbereitet…",
+  "Copying {arg0} of {arg1} songs from desktop…":
+      "{arg0} von {arg1} Songs werden vom Desktop kopiert…",
+  "Copied {arg0} of {arg1} songs from desktop. {arg2}{arg3}":
+      "{arg0} von {arg1} Songs vom Desktop kopiert. {arg2}{arg3}",
+  "Copied {arg0} songs from desktop.{arg1}":
+      "{arg0} Songs vom Desktop kopiert.{arg1}",
+  " {arg0} already on this phone.": " {arg0} bereits auf diesem Telefon.",
+  "; and {arg0} more": "; und {arg0} weitere",
+  "Lokal moved to background; remaining tracks were not started.": "Lokal wurde in den Hintergrund verschoben; weitere Titel wurden nicht gestartet.",
+  "Desktop transfer failed: {arg0}":
+      "Desktop-Übertragung fehlgeschlagen: {arg0}",
+  "Choose between 1 and 100 desktop songs to copy.":
+      "Wähle 1 bis 100 Desktop-Songs zum Kopieren aus.",
+  "The desktop song list is invalid.": "Die Desktop-Songliste ist ungültig.",
+  "Keep Lokal open in the foreground to copy songs.":
+      "Lokal muss zum Kopieren im Vordergrund geöffnet bleiben.",
+  "Reconnect to your paired desktop to copy songs.": "Verbinde dich erneut mit deinem gekoppelten Desktop, um Songs zu kopieren.",
   "Full player seekbar": "Fortschrittsleiste im Vollbildplayer",
   "Line, Wavy or Waveform. Waveform uses the song’s audio when available, with a line fallback.": "Linie, Welle oder Wellenform. Die Wellenform nutzt, wenn verfügbar, die Audiodaten des Titels, sonst eine Linie.",
   "Wavy": "Welle",
-  "A gentle wave along the played part of the track.": "Eine sanfte Welle im bereits abgespielten Teil des Titels.",
+  "A gentle wave along the played part of the track.":
+      "Eine sanfte Welle im bereits abgespielten Teil des Titels.",
   "Forget": "Vergessen",
   "Reverse song swipe actions": "Wischaktionen für Titel umkehren",
   "Swipe right to Play next, left to Add to queue.": "Nach rechts wischen: Als Nächstes abspielen. Nach links: Zur Warteschlange hinzufügen.",
@@ -1383,10 +1425,32 @@ const Map<String, String> _uide = {
   "“{arg0}” plays next": "Als nächstes wird „{arg0}“ abgespielt",
 };
 const Map<String, String> _uies = {
+  "Preparing {arg0} songs from desktop…":
+      "Preparando {arg0} canciones desde el escritorio…",
+  "Copying {arg0} of {arg1} songs from desktop…":
+      "Copiando {arg0} de {arg1} canciones desde el escritorio…",
+  "Copied {arg0} of {arg1} songs from desktop. {arg2}{arg3}": "Se copiaron {arg0} de {arg1} canciones desde el escritorio. {arg2}{arg3}",
+  "Copied {arg0} songs from desktop.{arg1}":
+      "Se copiaron {arg0} canciones desde el escritorio.{arg1}",
+  " {arg0} already on this phone.": " {arg0} ya están en este teléfono.",
+  "; and {arg0} more": "; y {arg0} más",
+  "Lokal moved to background; remaining tracks were not started.":
+      "Lokal pasó a segundo plano; no se iniciaron las canciones restantes.",
+  "Desktop transfer failed: {arg0}":
+      "Falló la transferencia desde el escritorio: {arg0}",
+  "Choose between 1 and 100 desktop songs to copy.":
+      "Elige entre 1 y 100 canciones del escritorio para copiar.",
+  "The desktop song list is invalid.":
+      "La lista de canciones del escritorio no es válida.",
+  "Keep Lokal open in the foreground to copy songs.":
+      "Mantén Lokal abierto en primer plano para copiar canciones.",
+  "Reconnect to your paired desktop to copy songs.":
+      "Vuelve a conectarte al escritorio vinculado para copiar canciones.",
   "Full player seekbar": "Barra de progreso del reproductor completo",
   "Line, Wavy or Waveform. Waveform uses the song’s audio when available, with a line fallback.": "Línea, ondulada o forma de onda. La forma de onda usa el audio de la canción cuando está disponible; si no, una línea.",
   "Wavy": "Ondulada",
-  "A gentle wave along the played part of the track.": "Una onda suave en la parte ya reproducida de la canción.",
+  "A gentle wave along the played part of the track.":
+      "Una onda suave en la parte ya reproducida de la canción.",
   "Forget": "Olvidar",
   "Reverse song swipe actions": "Invertir gestos de las canciones",
   "Swipe right to Play next, left to Add to queue.": "Desliza a la derecha para reproducir después y a la izquierda para añadir a la cola.",
@@ -2080,10 +2144,33 @@ const Map<String, String> _uies = {
   "“{arg0}” plays next": "“{arg0}” se reproduce a continuación",
 };
 const Map<String, String> _uiit = {
+  "Preparing {arg0} songs from desktop…":
+      "Preparazione di {arg0} brani dal desktop…",
+  "Copying {arg0} of {arg1} songs from desktop…":
+      "Copia di {arg0} brani su {arg1} dal desktop…",
+  "Copied {arg0} of {arg1} songs from desktop. {arg2}{arg3}":
+      "Copiati {arg0} brani su {arg1} dal desktop. {arg2}{arg3}",
+  "Copied {arg0} songs from desktop.{arg1}":
+      "Copiati {arg0} brani dal desktop.{arg1}",
+  " {arg0} already on this phone.": " {arg0} già su questo telefono.",
+  "; and {arg0} more": "; e altri {arg0}",
+  "Lokal moved to background; remaining tracks were not started.":
+      "Lokal è passato in background; gli altri brani non sono stati avviati.",
+  "Desktop transfer failed: {arg0}":
+      "Trasferimento dal desktop non riuscito: {arg0}",
+  "Choose between 1 and 100 desktop songs to copy.":
+      "Scegli da 1 a 100 brani del desktop da copiare.",
+  "The desktop song list is invalid.":
+      "L’elenco dei brani del desktop non è valido.",
+  "Keep Lokal open in the foreground to copy songs.":
+      "Tieni Lokal aperto in primo piano per copiare i brani.",
+  "Reconnect to your paired desktop to copy songs.":
+      "Riconnettiti al desktop associato per copiare i brani.",
   "Full player seekbar": "Barra di avanzamento del lettore completo",
   "Line, Wavy or Waveform. Waveform uses the song’s audio when available, with a line fallback.": "Linea, ondulata o forma d’onda. La forma d’onda usa l’audio del brano quando disponibile, altrimenti una linea.",
   "Wavy": "Ondulata",
-  "A gentle wave along the played part of the track.": "Un’onda delicata sulla parte già riprodotta del brano.",
+  "A gentle wave along the played part of the track.":
+      "Un’onda delicata sulla parte già riprodotta del brano.",
   "Forget": "Dimentica",
   "Reverse song swipe actions": "Inverti i gesti sui brani",
   "Swipe right to Play next, left to Add to queue.": "Scorri a destra per riprodurre dopo, a sinistra per aggiungere alla coda.",
@@ -2781,10 +2868,32 @@ const Map<String, String> _uiit = {
   "“{arg0}” plays next": "Successivamente viene riprodotto “{arg0}”.",
 };
 const Map<String, String> _uiptBR = {
+  "Preparing {arg0} songs from desktop…":
+      "Preparando {arg0} músicas do computador…",
+  "Copying {arg0} of {arg1} songs from desktop…":
+      "Copiando {arg0} de {arg1} músicas do computador…",
+  "Copied {arg0} of {arg1} songs from desktop. {arg2}{arg3}":
+      "{arg0} de {arg1} músicas copiadas do computador. {arg2}{arg3}",
+  "Copied {arg0} songs from desktop.{arg1}":
+      "{arg0} músicas copiadas do computador.{arg1}",
+  " {arg0} already on this phone.": " {arg0} já estão neste telefone.",
+  "; and {arg0} more": "; e mais {arg0}",
+  "Lokal moved to background; remaining tracks were not started.": "O Lokal foi para segundo plano; as músicas restantes não foram iniciadas.",
+  "Desktop transfer failed: {arg0}":
+      "Falha na transferência do computador: {arg0}",
+  "Choose between 1 and 100 desktop songs to copy.":
+      "Escolha de 1 a 100 músicas do computador para copiar.",
+  "The desktop song list is invalid.":
+      "A lista de músicas do computador é inválida.",
+  "Keep Lokal open in the foreground to copy songs.":
+      "Mantenha o Lokal aberto em primeiro plano para copiar músicas.",
+  "Reconnect to your paired desktop to copy songs.":
+      "Reconecte ao computador pareado para copiar músicas.",
   "Full player seekbar": "Barra de progresso do player completo",
   "Line, Wavy or Waveform. Waveform uses the song’s audio when available, with a line fallback.": "Linha, ondulada ou forma de onda. A forma de onda usa o áudio da música quando disponível; caso contrário, uma linha.",
   "Wavy": "Ondulada",
-  "A gentle wave along the played part of the track.": "Uma onda suave na parte já reproduzida da faixa.",
+  "A gentle wave along the played part of the track.":
+      "Uma onda suave na parte já reproduzida da faixa.",
   "Forget": "Esquecer",
   "Reverse song swipe actions": "Inverter gestos nas músicas",
   "Swipe right to Play next, left to Add to queue.": "Deslize para a direita para tocar a seguir e para a esquerda para adicionar à fila.",
@@ -3476,10 +3585,30 @@ const Map<String, String> _uiptBR = {
   "“{arg0}” plays next": "“{arg0}” é reproduzido a seguir",
 };
 const Map<String, String> _uinl = {
+  "Preparing {arg0} songs from desktop…":
+      "{arg0} nummers van de desktop voorbereiden…",
+  "Copying {arg0} of {arg1} songs from desktop…":
+      "{arg0} van {arg1} nummers van de desktop kopiëren…",
+  "Copied {arg0} of {arg1} songs from desktop. {arg2}{arg3}":
+      "{arg0} van {arg1} nummers van de desktop gekopieerd. {arg2}{arg3}",
+  "Copied {arg0} songs from desktop.{arg1}":
+      "{arg0} nummers van de desktop gekopieerd.{arg1}",
+  " {arg0} already on this phone.": " {arg0} staan al op deze telefoon.",
+  "; and {arg0} more": "; en nog {arg0}",
+  "Lokal moved to background; remaining tracks were not started.": "Lokal is naar de achtergrond verplaatst; de overige nummers zijn niet gestart.",
+  "Desktop transfer failed: {arg0}": "Desktopoverdracht mislukt: {arg0}",
+  "Choose between 1 and 100 desktop songs to copy.":
+      "Kies 1 tot 100 desktopnummers om te kopiëren.",
+  "The desktop song list is invalid.":
+      "De lijst met desktopnummers is ongeldig.",
+  "Keep Lokal open in the foreground to copy songs.":
+      "Houd Lokal op de voorgrond geopend om nummers te kopiëren.",
+  "Reconnect to your paired desktop to copy songs.": "Maak opnieuw verbinding met je gekoppelde desktop om nummers te kopiëren.",
   "Full player seekbar": "Voortgangsbalk in de volledige speler",
   "Line, Wavy or Waveform. Waveform uses the song’s audio when available, with a line fallback.": "Lijn, golvend of golfvorm. De golfvorm gebruikt de audio van het nummer als die beschikbaar is, anders een lijn.",
   "Wavy": "Golvend",
-  "A gentle wave along the played part of the track.": "Een zachte golf over het afgespeelde deel van het nummer.",
+  "A gentle wave along the played part of the track.":
+      "Een zachte golf over het afgespeelde deel van het nummer.",
   "Forget": "Vergeten",
   "Reverse song swipe actions": "Veegacties voor nummers omkeren",
   "Swipe right to Play next, left to Add to queue.": "Veeg naar rechts om hierna af te spelen, naar links om aan de wachtrij toe te voegen.",
@@ -4181,10 +4310,33 @@ const Map<String, String> _uinl = {
   "“{arg0}” plays next": "Vervolgens wordt “{arg0}” afgespeeld",
 };
 const Map<String, String> _uipl = {
+  "Preparing {arg0} songs from desktop…":
+      "Przygotowywanie {arg0} utworów z komputera…",
+  "Copying {arg0} of {arg1} songs from desktop…":
+      "Kopiowanie {arg0} z {arg1} utworów z komputera…",
+  "Copied {arg0} of {arg1} songs from desktop. {arg2}{arg3}":
+      "Skopiowano {arg0} z {arg1} utworów z komputera. {arg2}{arg3}",
+  "Copied {arg0} songs from desktop.{arg1}":
+      "Skopiowano {arg0} utworów z komputera.{arg1}",
+  " {arg0} already on this phone.": " {arg0} jest już na tym telefonie.",
+  "; and {arg0} more": "; i jeszcze {arg0}",
+  "Lokal moved to background; remaining tracks were not started.":
+      "Lokal działa w tle; pozostałe utwory nie zostały rozpoczęte.",
+  "Desktop transfer failed: {arg0}":
+      "Nie udało się przesłać z komputera: {arg0}",
+  "Choose between 1 and 100 desktop songs to copy.":
+      "Wybierz od 1 do 100 utworów z komputera do skopiowania.",
+  "The desktop song list is invalid.":
+      "Lista utworów z komputera jest nieprawidłowa.",
+  "Keep Lokal open in the foreground to copy songs.":
+      "Pozostaw Lokal na pierwszym planie, aby kopiować utwory.",
+  "Reconnect to your paired desktop to copy songs.":
+      "Połącz ponownie sparowany komputer, aby kopiować utwory.",
   "Full player seekbar": "Pasek postępu pełnego odtwarzacza",
   "Line, Wavy or Waveform. Waveform uses the song’s audio when available, with a line fallback.": "Linia, fala lub przebieg fali. Przebieg wykorzystuje dźwięk utworu, jeśli jest dostępny; w przeciwnym razie wyświetla linię.",
   "Wavy": "Fala",
-  "A gentle wave along the played part of the track.": "Łagodna fala w odtworzonej części utworu.",
+  "A gentle wave along the played part of the track.":
+      "Łagodna fala w odtworzonej części utworu.",
   "Forget": "Zapomnij",
   "Reverse song swipe actions": "Odwróć gesty przesuwania utworów",
   "Swipe right to Play next, left to Add to queue.": "Przesuń w prawo, aby odtworzyć jako następny; w lewo, aby dodać do kolejki.",
@@ -4873,10 +5025,32 @@ const Map<String, String> _uipl = {
   "“{arg0}” plays next": "Następnie odtwarzany jest utwór „{arg0}”.",
 };
 const Map<String, String> _uisv = {
+  "Preparing {arg0} songs from desktop…":
+      "Förbereder {arg0} låtar från datorn…",
+  "Copying {arg0} of {arg1} songs from desktop…":
+      "Kopierar {arg0} av {arg1} låtar från datorn…",
+  "Copied {arg0} of {arg1} songs from desktop. {arg2}{arg3}":
+      "Kopierade {arg0} av {arg1} låtar från datorn. {arg2}{arg3}",
+  "Copied {arg0} songs from desktop.{arg1}":
+      "Kopierade {arg0} låtar från datorn.{arg1}",
+  " {arg0} already on this phone.": " {arg0} finns redan på telefonen.",
+  "; and {arg0} more": "; och {arg0} till",
+  "Lokal moved to background; remaining tracks were not started.":
+      "Lokal gick till bakgrunden; återstående låtar startades inte.",
+  "Desktop transfer failed: {arg0}":
+      "Överföringen från datorn misslyckades: {arg0}",
+  "Choose between 1 and 100 desktop songs to copy.":
+      "Välj mellan 1 och 100 låtar från datorn att kopiera.",
+  "The desktop song list is invalid.": "Datorns låtlista är ogiltig.",
+  "Keep Lokal open in the foreground to copy songs.":
+      "Håll Lokal öppet i förgrunden för att kopiera låtar.",
+  "Reconnect to your paired desktop to copy songs.":
+      "Anslut till den parkopplade datorn igen för att kopiera låtar.",
   "Full player seekbar": "Förloppsreglage i helskärmsspelaren",
   "Line, Wavy or Waveform. Waveform uses the song’s audio when available, with a line fallback.": "Linje, vågig eller vågform. Vågformen använder låtens ljud när det finns tillgängligt, annars visas en linje.",
   "Wavy": "Vågig",
-  "A gentle wave along the played part of the track.": "En mjuk våg längs den spelade delen av låten.",
+  "A gentle wave along the played part of the track.":
+      "En mjuk våg längs den spelade delen av låten.",
   "Forget": "Glöm",
   "Reverse song swipe actions": "Vänd på låtarnas svepåtgärder",
   "Swipe right to Play next, left to Add to queue.": "Svep åt höger för att spela härnäst, åt vänster för att lägga till i kön.",
@@ -5572,8 +5746,23 @@ const Map<String, String> _uisv = {
   "“{arg0}” plays next": "\"{arg0}\" spelas härnäst",
 };
 const Map<String, String> _uizh = {
+  "Preparing {arg0} songs from desktop…": "正在准备从桌面复制 {arg0} 首歌曲…",
+  "Copying {arg0} of {arg1} songs from desktop…": "正在从桌面复制第 {arg0}/{arg1} 首歌曲…",
+  "Copied {arg0} of {arg1} songs from desktop. {arg2}{arg3}":
+      "已从桌面复制 {arg0}/{arg1} 首歌曲。{arg2}{arg3}",
+  "Copied {arg0} songs from desktop.{arg1}": "已从桌面复制 {arg0} 首歌曲。{arg1}",
+  " {arg0} already on this phone.": " {arg0} 首已在此手机上。",
+  "; and {arg0} more": "；还有 {arg0} 首",
+  "Lokal moved to background; remaining tracks were not started.":
+      "Lokal 已切换到后台；未开始复制剩余歌曲。",
+  "Desktop transfer failed: {arg0}": "从桌面传输失败：{arg0}",
+  "Choose between 1 and 100 desktop songs to copy.": "请选择 1 到 100 首桌面歌曲进行复制。",
+  "The desktop song list is invalid.": "桌面歌曲列表无效。",
+  "Keep Lokal open in the foreground to copy songs.": "请让 Lokal 保持在前台以复制歌曲。",
+  "Reconnect to your paired desktop to copy songs.": "请重新连接已配对的桌面以复制歌曲。",
   "Full player seekbar": "完整播放器进度条",
-  "Line, Wavy or Waveform. Waveform uses the song’s audio when available, with a line fallback.": "直线、波浪或波形。波形使用歌曲的音频数据；数据不可用时显示直线。",
+  "Line, Wavy or Waveform. Waveform uses the song’s audio when available, with a line fallback.":
+      "直线、波浪或波形。波形使用歌曲的音频数据；数据不可用时显示直线。",
   "Wavy": "波浪",
   "A gentle wave along the played part of the track.": "在歌曲已播放部分显示柔和的波浪。",
   "Forget": "忘记",
@@ -6249,10 +6438,31 @@ const Map<String, String> _uizh = {
   "“{arg0}” plays next": "接下来播放“{arg0}”",
 };
 const Map<String, String> _uitr = {
+  "Preparing {arg0} songs from desktop…":
+      "Masaüstünden {arg0} şarkı hazırlanıyor…",
+  "Copying {arg0} of {arg1} songs from desktop…":
+      "Masaüstünden {arg1} şarkının {arg0} tanesi kopyalanıyor…",
+  "Copied {arg0} of {arg1} songs from desktop. {arg2}{arg3}":
+      "Masaüstünden {arg1} şarkının {arg0} tanesi kopyalandı. {arg2}{arg3}",
+  "Copied {arg0} songs from desktop.{arg1}":
+      "Masaüstünden {arg0} şarkı kopyalandı.{arg1}",
+  " {arg0} already on this phone.": " {arg0} zaten bu telefonda.",
+  "; and {arg0} more": "; {arg0} tane daha",
+  "Lokal moved to background; remaining tracks were not started.":
+      "Lokal arka plana geçti; kalan parçalar başlatılmadı.",
+  "Desktop transfer failed: {arg0}": "Masaüstü aktarımı başarısız: {arg0}",
+  "Choose between 1 and 100 desktop songs to copy.":
+      "Kopyalamak için masaüstünden 1 ile 100 arasında şarkı seç.",
+  "The desktop song list is invalid.": "Masaüstü şarkı listesi geçersiz.",
+  "Keep Lokal open in the foreground to copy songs.":
+      "Şarkıları kopyalamak için Lokal'i ön planda açık tut.",
+  "Reconnect to your paired desktop to copy songs.":
+      "Şarkıları kopyalamak için eşleştirilmiş masaüstüne yeniden bağlan.",
   "Full player seekbar": "Tam oynatıcı ilerleme çubuğu",
   "Line, Wavy or Waveform. Waveform uses the song’s audio when available, with a line fallback.": "Çizgi, dalgalı veya dalga biçimi. Dalga biçimi, varsa parçanın ses verisini kullanır; yoksa çizgi gösterilir.",
   "Wavy": "Dalgalı",
-  "A gentle wave along the played part of the track.": "Parçanın çalınan bölümünde yumuşak bir dalga.",
+  "A gentle wave along the played part of the track.":
+      "Parçanın çalınan bölümünde yumuşak bir dalga.",
   "Forget": "Unut",
   "Reverse song swipe actions": "Şarkı kaydırma işlemlerini ters çevir",
   "Swipe right to Play next, left to Add to queue.":

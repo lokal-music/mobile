@@ -751,8 +751,46 @@ class LokalDesktopSource extends NetworkSourceService {
         .remoteServerIdEqualTo(server.id)
         .remoteIdEqualTo(id)
         .findAll();
-    // A retry after a completed copy must not create another durable file.
-    if (matching.any(isDownloadedDesktopOriginal)) return;
+    SongEntity? downloadedOriginal;
+    for (final row in matching) {
+      if (isDownloadedDesktopOriginal(row)) {
+        downloadedOriginal = row;
+        break;
+      }
+    }
+    var copy = downloadedOriginal;
+    await copyDesktopOriginalAndSidecars(
+      hasDownloadedOriginal: downloadedOriginal != null,
+      copyAudio: () async {
+        copy = await _downloadOriginalToPhone(
+          server,
+          track,
+          id,
+          credentials,
+          matching,
+          existing: existing,
+        );
+      },
+      retrySidecars: () {
+        final copied = copy;
+        if (copied == null) {
+          throw StateError(
+            'Desktop original copy did not produce a library row.',
+          );
+        }
+        return _retryCopiedTrackSidecars(server, credentials, id, copied);
+      },
+    );
+  }
+
+  Future<SongEntity> _downloadOriginalToPhone(
+    NetworkServerEntity server,
+    Map<String, dynamic> track,
+    String id,
+    LokalRemoteCredentials credentials,
+    List<SongEntity> matching, {
+    Song? existing,
+  }) async {
     await _musicStorage.requireFolder();
     final extension = track['fileType']?.toString().toLowerCase() ?? 'bin';
     if (!RegExp(r'^[a-z0-9]{1,8}$').hasMatch(extension)) {
@@ -859,12 +897,29 @@ class LokalDesktopSource extends NetworkSourceService {
           await _putLibrarySong(row);
         },
       );
-      await _copyTrackClip(credentials, server.id, id, client);
-      await syncCopiedLyrics(server, copies: [saved]);
+      return saved;
     } finally {
       client.close();
       if (await part.exists()) await part.delete();
       if (await file.exists()) await file.delete();
+    }
+  }
+
+  Future<void> _retryCopiedTrackSidecars(
+    NetworkServerEntity server,
+    LokalRemoteCredentials credentials,
+    String trackId,
+    SongEntity copy,
+  ) async {
+    final client = GracefulHttpClient();
+    if (_iosLibraryMutations) _libraryTransfers.cancelOnPause(client.close);
+    try {
+      await retryDesktopTrackSidecars(
+        copyClip: () => _copyTrackClip(credentials, server.id, trackId, client),
+        syncLyrics: () => syncCopiedLyrics(server, copies: [copy]),
+      );
+    } finally {
+      client.close();
     }
   }
 
