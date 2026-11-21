@@ -310,6 +310,8 @@ class LokalRemoteControllerState {
     this.remoteArtworkPath,
     this.artworkServerId,
     this.desktopName = 'Lokal desktop',
+    this.transferMessage,
+    this.transferHasError = false,
     this.mergeApproved = false,
     this.syncPreview,
     this.syncProgress = const LinkSyncProgress(),
@@ -333,6 +335,8 @@ class LokalRemoteControllerState {
   /// Queue thumbnails use it to resolve each track's own artwork on demand.
   final int? artworkServerId;
   final String desktopName;
+  final String? transferMessage;
+  final bool transferHasError;
   final bool mergeApproved;
   final Map<String, dynamic>? syncPreview;
   final LinkSyncProgress syncProgress;
@@ -358,6 +362,9 @@ class LokalRemoteControllerState {
     int? artworkServerId,
     bool clearArtworkServer = false,
     String? desktopName,
+    String? transferMessage,
+    bool clearTransferMessage = false,
+    bool? transferHasError,
     bool? mergeApproved,
     Map<String, dynamic>? syncPreview,
     LinkSyncProgress? syncProgress,
@@ -378,6 +385,10 @@ class LokalRemoteControllerState {
         ? null
         : artworkServerId ?? this.artworkServerId,
     desktopName: desktopName ?? this.desktopName,
+    transferMessage: clearTransferMessage
+        ? null
+        : transferMessage ?? this.transferMessage,
+    transferHasError: transferHasError ?? this.transferHasError,
     mergeApproved: mergeApproved ?? this.mergeApproved,
     syncPreview: syncPreview ?? this.syncPreview,
     syncProgress: syncProgress ?? this.syncProgress,

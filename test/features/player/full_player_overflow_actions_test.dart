@@ -43,6 +43,21 @@ void main() {
       );
     });
 
+    test('Send to desktop is only available for local files when paired', () {
+      expect(
+        showSendToDesktopMenuAction(localFile: true, connected: true),
+        isTrue,
+      );
+      expect(
+        showSendToDesktopMenuAction(localFile: false, connected: true),
+        isFalse,
+      );
+      expect(
+        showSendToDesktopMenuAction(localFile: true, connected: false),
+        isFalse,
+      );
+    });
+
     test('Now Playing menu follows a new track while it is open', () {
       final original = _song('original');
       final next = _song('next');

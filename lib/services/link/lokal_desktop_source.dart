@@ -602,8 +602,10 @@ class LokalDesktopSource extends NetworkSourceService {
   Future<List<Map<String, dynamic>>> readCatalogue(
     LokalRemoteCredentials credentials, {
     void Function(int)? onPage,
+    Set<String>? trackIds,
   }) async {
     final tracks = <Map<String, dynamic>>[];
+    final remaining = trackIds == null ? null : Set<String>.of(trackIds);
     var offset = 0;
     while (true) {
       final response = await http
@@ -622,7 +624,15 @@ class LokalDesktopSource extends NetworkSourceService {
       final items = (body['items'] as List)
           .map((raw) => Map<String, dynamic>.from(raw as Map))
           .toList();
-      tracks.addAll(items);
+      if (remaining == null) {
+        tracks.addAll(items);
+      } else {
+        for (final item in items) {
+          final id = item['id']?.toString();
+          if (id != null && remaining.remove(id)) tracks.add(item);
+        }
+        if (remaining.isEmpty) return tracks;
+      }
       onPage?.call(tracks.length);
       if (body['hasMore'] != true) return tracks;
       if (items.isEmpty || offset >= 100000) {
@@ -647,12 +657,19 @@ class LokalDesktopSource extends NetworkSourceService {
     Map<String, dynamic> track, {
     Song? existing,
   }) async {
-    await _musicStorage.requireFolder();
-    final credentials = await _credentials(server);
     final id = track['id']?.toString();
     if (id == null || id.isEmpty) {
       throw const FormatException('Desktop song has no identifier.');
     }
+    final credentials = await _credentials(server);
+    final matching = await Database.songs
+        .filter()
+        .remoteServerIdEqualTo(server.id)
+        .remoteIdEqualTo(id)
+        .findAll();
+    // A retry after a completed copy must not create another durable file.
+    if (matching.any(isDownloadedDesktopOriginal)) return;
+    await _musicStorage.requireFolder();
     final extension = track['fileType']?.toString().toLowerCase() ?? 'bin';
     if (!RegExp(r'^[a-z0-9]{1,8}$').hasMatch(extension)) {
       throw const FormatException('Invalid audio format.');
@@ -717,11 +734,6 @@ class LokalDesktopSource extends NetworkSourceService {
       // its local ID (and hence its likes/playlists/history) on original copy.
       // The preview's 'existing' can be null when the copy plan was refreshed.
       if (entity == null) {
-        final matching = await Database.songs
-            .filter()
-            .remoteServerIdEqualTo(server.id)
-            .remoteIdEqualTo(id)
-            .findAll();
         for (final candidate in matching) {
           if (isDownloadedDesktopOriginal(candidate)) {
             entity = candidate;

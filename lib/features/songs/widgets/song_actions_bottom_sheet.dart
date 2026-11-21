@@ -69,6 +69,12 @@ bool showWatchVideoMenuAction({
 }) => !nowPlaying && !hideMediaActions && videosEnabled;
 
 @visibleForTesting
+bool showSendToDesktopMenuAction({
+  required bool localFile,
+  required bool connected,
+}) => localFile && connected;
+
+@visibleForTesting
 Song? songForOpenMenu({
   required bool nowPlaying,
   required Song openedSong,
@@ -185,6 +191,7 @@ class SongActionsBottomSheet extends ConsumerWidget {
     final t = context.lokal;
     final liked = ref.watch(isSongFavoriteProvider(song.id));
     final videos = ref.watch(musicVideosEnabledProvider);
+    final desktopLink = ref.watch(lokalRemoteControllerProvider);
     final hasAlbum = song.album?.trim().isNotEmpty == true;
     // Actions run after the menu closes, so they read through the container,
     // not this widget's ref.
@@ -275,6 +282,42 @@ class SongActionsBottomSheet extends ConsumerWidget {
           onTap: close(() async {
             await LokalDesktopSource.instance.downloadToPhone(song);
             _say(l10n.linkDownloaded);
+          }),
+        ),
+      if (showSendToDesktopMenuAction(
+        localFile: _isLocalFile,
+        connected: desktopLink.socketConnected,
+      ))
+        _MenuRow(
+          icon: Icons.send_rounded,
+          label: lokalText('Send to desktop'),
+          onTap: close(() async {
+            try {
+              await container
+                  .read(lokalRemoteControllerProvider.notifier)
+                  .sendSongToDesktop(song);
+              _say(
+                lokalText(
+                  'Sent “{arg0}” to desktop',
+                  args: {'arg0': song.title},
+                ),
+              );
+            } catch (error) {
+              final reason = error is StateError
+                  ? error.message
+                  : 'Could not read or send the audio file. Reconnect and retry.';
+              _say(
+                lokalText(
+                  'Could not send “{arg0}” to desktop: {arg1}',
+                  args: {
+                    'arg0': song.title,
+                    'arg1': reason.length > 140
+                        ? reason.substring(0, 140)
+                        : reason,
+                  },
+                ),
+              );
+            }
           }),
         ),
       _MenuRow(

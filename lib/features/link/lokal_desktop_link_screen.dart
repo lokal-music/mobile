@@ -553,6 +553,15 @@ class _LokalDesktopLinkScreenState
           LokalSettingsBlock(
             child: Text(link.error!, style: TextStyle(color: t.muted)),
           ),
+        if (link.transferMessage != null)
+          LokalSettingsBlock(
+            child: Text(
+              link.transferMessage!,
+              style: TextStyle(
+                color: link.transferHasError ? t.accent : t.muted,
+              ),
+            ),
+          ),
         if (link.configured) ...[
           LokalSettingsBlock(
             child: LokalSettingsCard(
