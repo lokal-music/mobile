@@ -309,6 +309,25 @@ String? verifiedAudioCodec(Object? value) {
   return null;
 }
 
+/// Whether a verified audio codec can be retained when a library scan reports
+/// only its containing file format.
+bool audioCodecMatchesContainer(Object? codecValue, Object? containerValue) {
+  final codec = verifiedAudioCodec(codecValue);
+  final container = containerValue?.toString().toLowerCase().trim() ?? '';
+  if (codec == null || container.isEmpty) return false;
+  return switch (container.replaceFirst(RegExp(r'^\.'), '')) {
+    'm4a' || 'mp4' || 'isomp4' => codec == 'AAC' || codec == 'ALAC',
+    'mp3' || 'mpeg' => codec == 'MP3',
+    'flac' => codec == 'FLAC',
+    'wav' || 'wave' => codec == 'WAV',
+    'ogg' || 'oga' => codec == 'OPUS' || codec == 'VORBIS',
+    'opus' => codec == 'OPUS',
+    'webm' => codec == 'OPUS' || codec == 'VORBIS',
+    'wv' || 'wavpack' => codec == 'WAVPACK',
+    _ => false,
+  };
+}
+
 /// Approximate *measured file average* bitrate, not the selected download
 /// option or a generic 320 kbps provider promise. A usable native probe may
 /// supply bits/second directly; otherwise full file bytes / known duration

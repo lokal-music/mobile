@@ -8,6 +8,13 @@ import 'package:flick/models/song.dart';
 import 'package:flick/widgets/lokal/lokal_quality.dart';
 
 void main() {
+  test('verified codecs survive container-only library scans', () {
+    expect(audioCodecMatchesContainer('AAC', 'm4a'), isTrue);
+    expect(audioCodecMatchesContainer('ALAC', 'mp4'), isTrue);
+    expect(audioCodecMatchesContainer('AAC', 'flac'), isFalse);
+    expect(audioCodecMatchesContainer('M4A', 'm4a'), isFalse);
+  });
+
   test('Tidal HIGH/LOW preference survives Atmos catalogue availability', () {
     const tiers = [
       {'id': 'DOLBY_ATMOS', 'label': 'Dolby Atmos'},

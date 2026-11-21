@@ -1,12 +1,15 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flick/features/discovery/discovery_http.dart';
 import 'package:flick/features/discovery/discovery_models.dart';
+import 'package:flick/features/discovery/discovery_playback.dart';
 import 'package:flick/features/discovery/discovery_sources.dart';
 import 'package:flick/features/discovery/youtube_audio.dart';
 import 'package:flick/features/discovery/youtube_music_account.dart';
 import 'package:flick/core/utils/app_log.dart';
+import 'package:flick/src/rust/api/audio_api.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -56,6 +59,69 @@ void main() {
     expect(audio.url.queryParameters['itag'], '140');
     expect(audio.length, 130000 * 30);
     expect(audio.headers['User-Agent'], client.userAgent);
+  });
+
+  test('iOS playback uses the iOS client and transfers media only once', () async {
+    final asked = <String>[];
+    var mediaRequests = 0;
+    final fake = MockClient((request) async {
+      if (request.method == 'GET') {
+        mediaRequests++;
+        return http.Response.bytes(
+          [0, 0, 0, 16, 102, 116, 121, 112, 77, 52, 65, 32, 0, 0, 0, 0],
+          206,
+          headers: {
+            'content-range': 'bytes 0-15/16',
+            'content-type': 'audio/mp4',
+          },
+        );
+      }
+      final body = jsonDecode(request.body) as Map<String, dynamic>;
+      asked.add(body['context']['client']['clientName'] as String);
+      return http.Response(
+        jsonEncode({
+          'playabilityStatus': {'status': 'OK'},
+          'streamingData': {
+            'adaptiveFormats': [
+              {
+                'itag': 140,
+                'mimeType': 'audio/mp4; codecs="mp4a.40.2"',
+                'bitrate': 130000,
+                'contentLength': '16',
+                'url':
+                    'https://rr1---sn-abc.googlevideo.com/videoplayback?itag=140',
+              },
+            ],
+          },
+        }),
+        200,
+      );
+    });
+    addTearDown(fake.close);
+    final directory = await Directory.systemTemp.createTemp(
+      'youtube_audio_test_',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final httpClient = DiscoveryHttp(fake);
+    final cache = DiscoveryPlaybackCache(
+      http: httpClient,
+      directory: () async => directory,
+      probe: (_) async => const AudioProbeFormat(sampleRate: 44100, channels: 2),
+    );
+    final audio = YoutubeAudio(httpClient, isIOS: true);
+
+    await audio.prepare(
+      const DiscoveryTrack(
+        id: 'dQw4w9WgXcQ',
+        title: 'Track',
+        artist: 'Artist',
+        source: DiscoverySource.youtubeMusic,
+      ),
+      cache,
+    );
+
+    expect(asked, ['IOS']);
+    expect(mediaRequests, 1, reason: 'the transfer replaces the first-byte probe');
   });
 
   test('says why YouTube refused', () {

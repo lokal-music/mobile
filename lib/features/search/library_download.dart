@@ -12,6 +12,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:flick/data/entities/song_entity.dart';
 import 'package:flick/data/repositories/song_repository.dart';
 import 'package:flick/features/discovery/discovery_models.dart';
+import 'package:flick/services/catalogue_quality.dart';
 import 'package:flick/models/song.dart';
 import 'package:flick/core/utils/library_metadata_placeholders.dart';
 import 'package:flick/services/atmos_diagnostics.dart';
@@ -211,6 +212,16 @@ class LibraryDownloader {
     folderUri: song.folderUri,
   );
 
+  static int? _preparedBitrateKbps(Song song) {
+    final match = RegExp(
+      r'(\d+(?:\.\d+)?)\s*(?:kbps|kb/s|kbit/s)',
+      caseSensitive: false,
+    ).firstMatch(song.resolution ?? '');
+    final value = double.tryParse(match?.group(1) ?? '');
+    if (value == null || !value.isFinite || value <= 0) return null;
+    return value.round();
+  }
+
   /// A file name for [song]: "Artist - Title.ext", without characters file
   /// systems refuse.
   static String fileName(Song song, String extension) {
@@ -389,8 +400,12 @@ class LibraryDownloader {
               ? (prepared.fileType.toUpperCase() == 'AC-4'
                     ? 'AC-4'
                     : 'E-AC-3 JOC')
+              : ios
+              ? verifiedAudioCodec(prepared.fileType) ??
+                    extension.replaceFirst('.', '').toUpperCase()
               : extension.replaceFirst('.', '').toUpperCase()
           ..fileSize = stat.size
+          ..bitrate = ios ? _preparedBitrateKbps(prepared) : null
           ..sampleRate = prepared.sampleRate
           ..bitDepth = prepared.bitDepth
           ..dateAdded = now

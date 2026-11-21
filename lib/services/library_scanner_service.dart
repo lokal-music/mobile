@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 
 import '../core/utils/audio_metadata_utils.dart';
 import '../core/utils/library_metadata_placeholders.dart';
+import 'catalogue_quality.dart';
 import '../data/database.dart';
 import '../data/repositories/song_repository.dart';
 import '../data/repositories/folder_repository.dart';
@@ -39,6 +40,11 @@ enum ScanMode {
   /// Re-read metadata for every file found on disk.
   full,
 }
+
+String _scannedFileType(String? existing, String detected) =>
+    audioCodecMatchesContainer(existing, detected)
+    ? existing!.trim().toUpperCase()
+    : detected.toUpperCase();
 
 /// Live snapshot of a single folder while several folders scan concurrently.
 class FolderScanProgress {
@@ -783,7 +789,7 @@ class LibraryScannerService {
         ..trackNumber = file.trackNumber ?? 0
         ..discNumber = file.discNumber ?? 1
         ..durationMs = file.duration ?? 0
-        ..fileType = file.extension.toUpperCase()
+        ..fileType = _scannedFileType(existing?.fileType, file.extension)
         ..dateAdded =
             existing?.dateAdded ??
             (file.dateAdded != null
@@ -1561,7 +1567,12 @@ class LibraryScannerService {
         final storedFileType = existing.fileType?.trim().toUpperCase();
         final fileTypeMismatch =
             currentFileType.isNotEmpty &&
-            (storedFileType == null || storedFileType != currentFileType);
+            (storedFileType == null ||
+                (storedFileType != currentFileType &&
+                    !audioCodecMatchesContainer(
+                      storedFileType,
+                      currentFileType,
+                    )));
         final missingTags =
             existing.artist.trim().isEmpty ||
             isUnknownLibraryArtist(existing.artist) ||
@@ -2035,7 +2046,7 @@ class LibraryScannerService {
             ..trackNumber = metadata.trackNumber ?? existing?.trackNumber ?? 0
             ..discNumber = metadata.discNumber ?? existing?.discNumber ?? 1
             ..durationMs = metadata.durationMs?.toInt() ?? 0
-            ..fileType = metadata.format.toUpperCase()
+            ..fileType = _scannedFileType(existing?.fileType, metadata.format)
             ..dateAdded = existing?.dateAdded ?? DateTime.now()
             ..lastModified = DateTime.fromMillisecondsSinceEpoch(
               metadata.lastModified,
@@ -2244,7 +2255,10 @@ class LibraryScannerService {
                 ..trackNumber = metadata.trackNumber
                 ..discNumber = metadata.discNumber
                 ..durationMs = metadata.durationMs?.toInt()
-                ..fileType = metadata.format.toUpperCase()
+                ..fileType = _scannedFileType(
+                  fallback.fileType,
+                  metadata.format,
+                )
                 ..fileSize = metadata.fileSize.toInt()
                 ..lastModified = modified
                 ..folderUri = folderUri

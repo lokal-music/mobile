@@ -273,6 +273,23 @@ void main() {
     expect(upserts.single.folderUri, expectedRoot);
   });
 
+  test('iOS saves verified codec and measured download bitrate', () async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+
+    await downloader(const []).save(
+      prepared().copyWith(fileType: 'AAC', resolution: '256 kbps'),
+    );
+    expect(upserts.single.fileType, 'AAC');
+    expect(upserts.single.bitrate, 256);
+
+    await downloader(const []).save(
+      prepared().copyWith(fileType: 'ALAC', resolution: 'Lossless'),
+    );
+    expect(upserts.last.fileType, 'ALAC');
+    expect(upserts.last.bitrate, isNull);
+  });
+
   test(
     'download embeds portable line lyrics without fabricating word stamps',
     () async {

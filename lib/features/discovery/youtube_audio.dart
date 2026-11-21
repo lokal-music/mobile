@@ -23,14 +23,17 @@ class YoutubeAudio {
     this.session,
     this.nativeFallback,
     YoutubePlayerCipher? cipher,
+    bool? isIOS,
   }) : cipher =
            cipher ??
            ((io.Platform.isIOS || io.Platform.isAndroid)
                ? YoutubePlayerCipher(http)
-               : null);
+               : null),
+       _isIOS = isIOS ?? io.Platform.isIOS;
 
   final DiscoveryHttp http;
   final YoutubePlayerCipher? cipher;
+  final bool _isIOS;
 
   /// Existing browser sign-in is reused when available. Anonymous playback
   /// still tries the public clients, and cookie material is only sent to
@@ -62,7 +65,9 @@ class YoutubeAudio {
     void Function(int received, int? total)? onProgress,
   }) async {
     for (var attempt = 0; ; attempt++) {
-      final audio = await resolve(track.id, cancel: cancel);
+      // The full media transfer immediately below verifies this URL too. A
+      // separate first-byte probe adds another request/round trip to startup.
+      final audio = await resolve(track.id, cancel: cancel, verifyMedia: false);
       try {
         return await cache.prepare(
           track, audio, cancel: cancel,
@@ -77,8 +82,15 @@ class YoutubeAudio {
             !reason.contains('non-audio') &&
             !reason.contains('http 403') &&
             !reason.contains('http 401') &&
+            !reason.contains('http 404') &&
+            !reason.contains('http 429') &&
+            !RegExp(r'http 5\d\d').hasMatch(reason) &&
             !reason.contains('invalid media range') &&
-            !reason.contains('download size limit')) {
+            !reason.contains('download size limit') &&
+            !reason.contains('could not verify this audio file') &&
+            !reason.contains('not a supported progressive audio file') &&
+            !reason.contains('could not reach the source securely') &&
+            !reason.contains('source timed out')) {
           rethrow;
         }
         final client = audio.url.queryParameters['c'];
@@ -221,6 +233,7 @@ class YoutubeAudio {
   Future<ResolvedDiscoveryAudio> resolve(
     String videoId, {
     Future<void>? cancel,
+    bool verifyMedia = true,
   }) async {
     if (!_videoId.hasMatch(videoId)) {
       throw const DiscoveryException('This isn’t a YouTube recording.');
@@ -253,7 +266,13 @@ class YoutubeAudio {
         // the same failed native walk again at the end.
       }
     }
-    for (final client in clients) {
+    final directClients = _isIOS
+        ? [
+            clients.firstWhere((client) => client.name == 'IOS'),
+            ...clients.where((client) => client.name != 'IOS'),
+          ]
+        : clients;
+    for (final client in directClients) {
       if (_refusedClients.contains(client.name)) continue;
       try {
         final useSignedInMusicClient =
@@ -332,7 +351,7 @@ class YoutubeAudio {
         // bound to a different client identity. Verify actual media access
         // before handing the link to the downloader; a 403 from one client
         // must not prevent the next client from being tried.
-        await _probeMedia(audio, cancel: cancel);
+        if (verifyMedia) await _probeMedia(audio, cancel: cancel);
         return audio;
       } on DiscoveryException catch (error) {
         if (error.message == 'Request cancelled.') rethrow;
