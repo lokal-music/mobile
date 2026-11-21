@@ -8,6 +8,7 @@ import 'desktop_music_storage.dart';
 import 'copied_track_clip.dart';
 import 'desktop_catalogue_import.dart';
 import 'desktop_genre_reconciliation.dart';
+import 'desktop_track_copy_command.dart';
 
 import 'package:path/path.dart' as p;
 
@@ -76,13 +77,17 @@ class LokalDesktopSource extends NetworkSourceService {
   LokalDesktopSource({
     http.Client Function()? uploadClientFactory,
     http.Client Function()? originalClientFactory,
+    http.Client Function()? catalogueClientFactory,
     bool? iosLibraryMutations,
   }) : _iosLibraryMutations = iosLibraryMutations ?? Platform.isIOS,
        _uploadClientFactory = uploadClientFactory ?? GracefulHttpClient.new,
-       _originalClientFactory = originalClientFactory ?? GracefulHttpClient.new;
+       _originalClientFactory = originalClientFactory ?? GracefulHttpClient.new,
+       _catalogueClientFactory =
+           catalogueClientFactory ?? GracefulHttpClient.new;
   final bool _iosLibraryMutations;
   final http.Client Function() _uploadClientFactory;
   final http.Client Function() _originalClientFactory;
+  final http.Client Function() _catalogueClientFactory;
   static final instance = LokalDesktopSource();
   final _libraryTransfers = IosForegroundTransferBarrier();
   int get libraryTransferEpoch => _libraryTransfers.epoch;
@@ -602,10 +607,8 @@ class LokalDesktopSource extends NetworkSourceService {
   Future<List<Map<String, dynamic>>> readCatalogue(
     LokalRemoteCredentials credentials, {
     void Function(int)? onPage,
-    Set<String>? trackIds,
   }) async {
     final tracks = <Map<String, dynamic>>[];
-    final remaining = trackIds == null ? null : Set<String>.of(trackIds);
     var offset = 0;
     while (true) {
       final response = await http
@@ -624,15 +627,7 @@ class LokalDesktopSource extends NetworkSourceService {
       final items = (body['items'] as List)
           .map((raw) => Map<String, dynamic>.from(raw as Map))
           .toList();
-      if (remaining == null) {
-        tracks.addAll(items);
-      } else {
-        for (final item in items) {
-          final id = item['id']?.toString();
-          if (id != null && remaining.remove(id)) tracks.add(item);
-        }
-        if (remaining.isEmpty) return tracks;
-      }
+      tracks.addAll(items);
       onPage?.call(tracks.length);
       if (body['hasMore'] != true) return tracks;
       if (items.isEmpty || offset >= 100000) {
@@ -641,6 +636,95 @@ class LokalDesktopSource extends NetworkSourceService {
         );
       }
       offset += items.length;
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> lookupCatalogueTracks(
+    LokalRemoteCredentials credentials,
+    Object? requestedIds,
+  ) async {
+    final ids = validateDesktopTrackCopyIds(requestedIds);
+    final client = _catalogueClientFactory();
+    try {
+      final response = await client
+          .post(
+            credentials.origin.replace(
+              path: '/api/remote/library/tracks/lookup',
+            ),
+            headers: {
+              ..._headers(credentials),
+              'content-type': 'application/json',
+            },
+            body: jsonEncode({'ids': ids}),
+          )
+          .timeout(const Duration(seconds: 15));
+      if (response.bodyBytes.length > 4 * 1024 * 1024) {
+        throw const FormatException(
+          'Desktop song lookup response was too large.',
+        );
+      }
+      if (response.statusCode == 400) {
+        final body = _decodeLookupBody(response.body);
+        final rawError = body?['error'];
+        final error = rawError is String && rawError.trim().isNotEmpty
+            ? rawError.replaceAll(RegExp(r'[\x00-\x1f\x7f]'), ' ').trim()
+            : 'The desktop rejected the song lookup.';
+        throw FormatException(
+          error.length > 300 ? error.substring(0, 300) : error,
+        );
+      }
+      if (response.statusCode == 401 || response.statusCode == 403) {
+        throw StateError(
+          'The desktop rejected this pairing. Reconnect and retry.',
+        );
+      }
+      if (response.statusCode == 404) {
+        throw StateError(
+          'Update Lokal on your PC to copy selected song files.',
+        );
+      }
+      if (response.statusCode != 200) {
+        throw HttpException(
+          'Desktop song lookup failed (HTTP ${response.statusCode}).',
+        );
+      }
+      final body = _decodeLookupBody(response.body);
+      final rawItems = body?['items'];
+      if (rawItems is! List || rawItems.length > ids.length) {
+        throw const FormatException(
+          'Desktop song lookup response was invalid.',
+        );
+      }
+      final requested = ids.toSet();
+      final found = <String>{};
+      final items = <Map<String, dynamic>>[];
+      for (final raw in rawItems) {
+        if (raw is! Map) {
+          throw const FormatException(
+            'Desktop song lookup returned invalid track metadata.',
+          );
+        }
+        final track = Map<String, dynamic>.from(raw);
+        final id = track['id'];
+        if (id is! String || !requested.contains(id) || !found.add(id)) {
+          throw const FormatException(
+            'Desktop song lookup returned an unexpected track.',
+          );
+        }
+        items.add(track);
+      }
+      return items;
+    } finally {
+      client.close();
+    }
+  }
+
+  Map? _decodeLookupBody(String body) {
+    try {
+      final decoded = jsonDecode(body);
+      return decoded is Map ? decoded : null;
+    } on FormatException {
+      return null;
     }
   }
 

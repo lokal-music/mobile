@@ -1169,8 +1169,7 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
     );
     final result = await copyDesktopCatalogueTracks(
       requestedIds: ids,
-      loadCatalogue: () =>
-          source.readCatalogue(credentials, trackIds: ids.toSet()),
+      loadCatalogue: () => source.lookupCatalogueTracks(credentials, ids),
       isAlreadyPresent: (id) async {
         final rows = await Database.songs
             .filter()
