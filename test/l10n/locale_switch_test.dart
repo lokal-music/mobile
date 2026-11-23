@@ -161,6 +161,18 @@ void main() {
     expect(translations.songsIn(3, 2), '2 klasörde 3 şarkı');
   });
 
+  test('Russian is supported and resolves from regional variants', () {
+    expect(kSupportedLocales, contains(const Locale('ru')));
+    expect(
+      resolveSupportedLocale(const Locale('ru', 'RU')),
+      const Locale('ru'),
+    );
+    final translations = lookupAppLocalizations(const Locale('ru'));
+    expect(translations.addedSongsToQueue(1), 'Добавлено в очередь');
+    expect(translations.addedSongsToQueue(4), 'Добавлено 4 трека в очередь');
+    expect(translations.addedSongsToQueue(5), 'Добавлено 5 треков в очередь');
+  });
+
   testWidgets('a widget reading l10n during build follows the switch', (
     tester,
   ) async {

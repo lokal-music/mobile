@@ -1,0 +1,20 @@
+// Lokal Home Screen widget labels. Recording metadata is never translated.
+"Now Playing" = "Сейчас играет";
+"Flow / Radio" = "Flow / Радио";
+"Cover Flow" = "Cover Flow";
+"Open Lokal" = "Открыть Lokal";
+"Open Lokal to refresh" = "Откройте Lokal для обновления";
+"Buffering" = "Буферизация";
+"Your music, one tap away" = "Ваша музыка в одно касание";
+"Start Flow or radio in Lokal" = "Запустите Flow или радио в Lokal";
+"Playback progress" = "Ход воспроизведения";
+"Unknown track" = "Неизвестный трек";
+
+"Play" = "Слушать";
+"Pause" = "Пауза";
+"Next" = "Далее";
+"Previous" = "Назад";
+"Queue" = "Очередь";
+"Flow" = "Flow";
+"Song Radio" = "Радио по треку";
+"Your Flow" = "Ваш Flow";

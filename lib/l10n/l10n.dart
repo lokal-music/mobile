@@ -48,6 +48,7 @@ const List<Locale> kSupportedLocales = <Locale>[
   Locale('pt', 'BR'),
   Locale('nl'),
   Locale('pl'),
+  Locale('ru'),
   Locale('sv'),
   Locale('tr'),
 ];
@@ -74,6 +75,7 @@ String lokalText(String message, {Map<String, Object?> args = const {}}) {
     'Português (Brasil)',
     'Nederlands',
     'Polski',
+    'Русский',
     'Svenska',
     'Türkçe',
     '简体中文',

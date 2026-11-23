@@ -973,6 +973,7 @@
 				"FEE5C22B25561EE035AC6A13",
 				"DD186B02582D4399C82B1B9A",
 				"D1CDA70D635D9D05346FA890",
+				"A1B2C3D4E5F60718293A4B5C",
 				"46985317F21F03BAFEDD7D7F",
 				"901CD2D7D639DC98642C97D7",
 				"5E30A9BCDB0714C3A58D178C",
@@ -1034,6 +1035,13 @@
 			"lastKnownFileType" = "text.plist.strings";
 			"name" = "pl";
 			"path" = "Widgets/Resources/pl.lproj/Localizable.strings";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		A1B2C3D4E5F60718293A4B5C = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "text.plist.strings";
+			"name" = "ru";
+			"path" = "Widgets/Resources/ru.lproj/Localizable.strings";
 			"sourceTree" = "SOURCE_ROOT";
 		};
 		46985317F21F03BAFEDD7D7F = {

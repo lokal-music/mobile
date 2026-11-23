@@ -339,6 +339,7 @@ List<LokalSettingsSection> appearanceSettings(
                   child: Text(lokalText('Nederlands')),
                 ),
                 DropdownMenuItem(value: 'pl', child: Text(lokalText('Polski'))),
+                DropdownMenuItem(value: 'ru', child: Text('Русский')),
                 DropdownMenuItem(
                   value: 'sv',
                   child: Text(lokalText('Svenska')),

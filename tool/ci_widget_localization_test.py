@@ -31,6 +31,12 @@ class NativeTurkishLocalizationTest(unittest.TestCase):
         self.assertEqual(turkish, english)
         self.assertGreaterEqual(len(english), 50)
 
+    def test_widget_resource_keys_have_complete_russian_parity(self):
+        english = resource_names(RESOURCES / "values/widget_strings.xml")
+        russian = resource_names(RESOURCES / "values-ru/widget_strings.xml")
+        self.assertEqual(russian, english)
+        self.assertGreaterEqual(len(english), 50)
+
     def test_widget_layouts_do_not_embed_english_labels(self):
         # Brand names and glyph-only transport arrows are intentionally fixed.
         allowed_literals = {"Lokal", "‹", "›"}
