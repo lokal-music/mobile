@@ -806,7 +806,7 @@ class LokalCardGrid extends StatelessWidget {
 }
 
 /// The search field under a page title.
-class LokalSearchField extends StatelessWidget {
+class LokalSearchField extends StatefulWidget {
   const LokalSearchField({
     super.key,
     required this.controller,
@@ -819,28 +819,84 @@ class LokalSearchField extends StatelessWidget {
   final ValueChanged<String> onChanged;
 
   @override
+  State<LokalSearchField> createState() => _LokalSearchFieldState();
+}
+
+class _LokalSearchFieldState extends State<LokalSearchField> {
+  final FocusNode _focusNode = FocusNode();
+  bool _hadFocus = false;
+  bool _pendingSelectAllOnTap = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _focusNode.addListener(_onFocusChanged);
+  }
+
+  @override
+  void dispose() {
+    _focusNode.removeListener(_onFocusChanged);
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  void _selectAll() {
+    final text = widget.controller.text;
+    if (text.isEmpty) return;
+    widget.controller.selection = TextSelection(
+      baseOffset: 0,
+      extentOffset: text.length,
+    );
+  }
+
+  void _onFocusChanged() {
+    final hasFocus = _focusNode.hasFocus;
+    if (hasFocus && !_hadFocus) {
+      if (widget.controller.text.isNotEmpty) {
+        _selectAll();
+        _pendingSelectAllOnTap = true;
+      }
+    } else if (!hasFocus) {
+      _pendingSelectAllOnTap = false;
+    }
+    _hadFocus = hasFocus;
+  }
+
+  void _onTap() {
+    if (!_pendingSelectAllOnTap) return;
+    _pendingSelectAllOnTap = false;
+    _selectAll();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final t = context.lokal;
     return TextField(
-      controller: controller,
-      onChanged: onChanged,
+      controller: widget.controller,
+      focusNode: _focusNode,
+      onTap: _onTap,
+      onChanged: (value) {
+        _pendingSelectAllOnTap = false;
+        widget.onChanged(value);
+      },
       textInputAction: TextInputAction.search,
       style: TextStyle(color: t.text, fontSize: 16),
       decoration: InputDecoration(
         isDense: true,
         filled: true,
         fillColor: t.surface2,
-        hintText: hint,
+        hintText: widget.hint,
         hintStyle: TextStyle(color: t.muted),
         prefixIcon: Icon(Icons.search_rounded, color: t.muted),
-        suffixIcon: controller.text.isEmpty
+        suffixIcon: widget.controller.text.isEmpty
             ? null
             : IconButton(
                 tooltip: lokalText('Clear'),
                 icon: Icon(Icons.cancel_rounded, color: t.muted, size: 18),
                 onPressed: () {
-                  controller.clear();
-                  onChanged('');
+                  _pendingSelectAllOnTap = false;
+                  widget.controller.clear();
+                  widget.onChanged('');
                 },
               ),
         contentPadding: const EdgeInsets.symmetric(vertical: 10),

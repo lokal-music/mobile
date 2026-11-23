@@ -49,18 +49,74 @@ class GlassSearchBar extends StatefulWidget {
 
 class _GlassSearchBarState extends State<GlassSearchBar> {
   bool _showClearButton = false;
+  FocusNode? _ownedFocusNode;
+  bool _hadFocus = false;
+  bool _pendingSelectAllOnTap = false;
+
+  FocusNode get _focusNode => widget.focusNode ?? (_ownedFocusNode ??= FocusNode());
 
   @override
   void initState() {
     super.initState();
     _showClearButton = widget.controller.text.isNotEmpty;
     widget.controller.addListener(_onTextChanged);
+    _hadFocus = _focusNode.hasFocus;
+    _focusNode.addListener(_onFocusChanged);
+  }
+
+  @override
+  void didUpdateWidget(covariant GlassSearchBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      oldWidget.controller.removeListener(_onTextChanged);
+      widget.controller.addListener(_onTextChanged);
+      _showClearButton = widget.controller.text.isNotEmpty;
+    }
+    if (oldWidget.focusNode != widget.focusNode) {
+      (oldWidget.focusNode ?? _ownedFocusNode)?.removeListener(_onFocusChanged);
+      if (widget.focusNode != null) {
+        _ownedFocusNode?.dispose();
+        _ownedFocusNode = null;
+      }
+      _hadFocus = _focusNode.hasFocus;
+      _focusNode.addListener(_onFocusChanged);
+    }
   }
 
   @override
   void dispose() {
     widget.controller.removeListener(_onTextChanged);
+    (widget.focusNode ?? _ownedFocusNode)?.removeListener(_onFocusChanged);
+    _ownedFocusNode?.dispose();
     super.dispose();
+  }
+
+  void _selectAll() {
+    final text = widget.controller.text;
+    if (text.isEmpty) return;
+    widget.controller.selection = TextSelection(
+      baseOffset: 0,
+      extentOffset: text.length,
+    );
+  }
+
+  void _onFocusChanged() {
+    final hasFocus = _focusNode.hasFocus;
+    if (hasFocus && !_hadFocus) {
+      if (widget.controller.text.isNotEmpty) {
+        _selectAll();
+        _pendingSelectAllOnTap = true;
+      }
+    } else if (!hasFocus) {
+      _pendingSelectAllOnTap = false;
+    }
+    _hadFocus = hasFocus;
+  }
+
+  void _onTap() {
+    if (!_pendingSelectAllOnTap) return;
+    _pendingSelectAllOnTap = false;
+    _selectAll();
   }
 
   void _onTextChanged() {
@@ -92,10 +148,14 @@ class _GlassSearchBarState extends State<GlassSearchBar> {
           Expanded(
             child: TextField(
               controller: widget.controller,
-              focusNode: widget.focusNode,
+              focusNode: _focusNode,
               autofocus: widget.autofocus,
               textInputAction: widget.textInputAction,
-              onChanged: widget.onChanged,
+              onTap: _onTap,
+              onChanged: (value) {
+                _pendingSelectAllOnTap = false;
+                widget.onChanged?.call(value);
+              },
               onTapOutside: (_) => FocusScope.of(context).unfocus(),
               style: TextStyle(
                 color: context.adaptiveTextPrimary,
@@ -114,6 +174,7 @@ class _GlassSearchBarState extends State<GlassSearchBar> {
           if (_showClearButton)
             GestureDetector(
               onTap: () {
+                _pendingSelectAllOnTap = false;
                 widget.controller.clear();
                 widget.onChanged?.call('');
                 widget.onClear?.call();

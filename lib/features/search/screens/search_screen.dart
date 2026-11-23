@@ -91,10 +91,20 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
 
   void _onFooterSearchTap() => _focusAfterNavigation();
 
+  void _selectAllQuery() {
+    final text = _controller.text;
+    if (text.isEmpty) return;
+    _controller.selection = TextSelection(
+      baseOffset: 0,
+      extentOffset: text.length,
+    );
+  }
+
   void _focusAfterNavigation() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || widget.footerFocusRequests == null) return;
       _focusNode.requestFocus();
+      _selectAllQuery();
       // Android may hide its IME on Back while leaving the field focused.
       // requestKeyboard() also reopens it on a repeated dock Search tap.
       _focusNode.context
@@ -148,7 +158,9 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     ref.listen(navigationIndexProvider, (prev, next) {
       if (next == NavBarButton.search.pageIndex && autoFocus) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) _focusNode.requestFocus();
+          if (!mounted) return;
+          _focusNode.requestFocus();
+          _selectAllQuery();
         });
       } else if (prev == NavBarButton.search.pageIndex) {
         _focusNode.unfocus();
