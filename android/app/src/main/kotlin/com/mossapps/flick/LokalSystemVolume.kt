@@ -60,7 +60,10 @@ object LokalSystemVolume {
                 // Keep the observer as a fallback for OEM implementations.
                 receiver = object : BroadcastReceiver() {
                     override fun onReceive(context: Context?, intent: Intent?) {
-                        if (intent?.getIntExtra("android.media.EXTRA_VOLUME_STREAM_TYPE", -1) == AudioManager.STREAM_MUSIC) publish()
+                        // OEMs do not consistently include EXTRA_VOLUME_STREAM_TYPE.
+                        // Re-read STREAM_MUSIC for every volume broadcast; unrelated
+                        // stream changes are filtered by publish()'s value comparison.
+                        if (intent?.action == "android.media.VOLUME_CHANGED_ACTION") publish()
                     }
                 }
                 val filter = IntentFilter("android.media.VOLUME_CHANGED_ACTION")
