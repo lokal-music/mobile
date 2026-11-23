@@ -5867,6 +5867,9 @@ class MainActivity: FlutterActivity() {
 
     override fun onResume() {
         super.onResume()
+        // FlutterActivity can regain focus after external/system UI. Reassert
+        // the media stream here so hardware volume keys keep controlling music.
+        volumeControlStream = AudioManager.STREAM_MUSIC
         LokalAppUpdater.systemUiOpen = false
     }
 
