@@ -129,7 +129,7 @@ internal class JustAudioProcessingController {
                     return
                 }
 
-            if (!effect.hasControl) {
+            if (!effect.hasControl()) {
                 releaseLoudnessEnhancer()
                 result.error(
                     "LOUDNESS_ENHANCER_NO_CONTROL",
