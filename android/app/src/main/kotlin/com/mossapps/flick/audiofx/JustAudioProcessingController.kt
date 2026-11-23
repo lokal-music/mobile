@@ -129,9 +129,25 @@ internal class JustAudioProcessingController {
                     return
                 }
 
-            boostSessionId = sid
-            effect.enabled = true
+            if (!effect.hasControl) {
+                releaseLoudnessEnhancer()
+                result.error(
+                    "LOUDNESS_ENHANCER_NO_CONTROL",
+                    "Android did not grant control of the playback session LoudnessEnhancer",
+                    null,
+                )
+                return
+            }
+
+            // Configure gain before enabling. Some vendor effect engines ignore
+            // target updates while the effect is already active.
             effect.setTargetGain(gainMb)
+            effect.enabled = true
+            boostSessionId = sid
+            Log.i(
+                TAG,
+                "LoudnessEnhancer active: session=${sid} targetGainMb=${effect.targetGain} enabled=${effect.enabled}",
+            )
             result.success(null)
         } catch (e: Exception) {
             logAndRelease("LoudnessEnhancer", e) { releaseLoudnessEnhancer() }
