@@ -501,18 +501,28 @@ class _LokalDesktopLinkScreenState
         (address.contains('://') ? address : 'http://$address');
     final expected = await ref.read(lokalRemoteCredentialsStoreProvider).read();
     if (!mounted) return;
-    await IosTransferRoot.withPairingRetirement(
-      context,
-      expected: expected,
-      mutation: () => ref
-          .read(lokalRemoteControllerProvider.notifier)
-          .pairDesktop(
-            origin: origin,
-            code: qr?.code ?? _code.text,
-            expectedDesktopId: qr?.desktopId,
-            syncTheme: _theme,
-          ),
-    );
+    final mutation = () => ref
+        .read(lokalRemoteControllerProvider.notifier)
+        .pairDesktop(
+          origin: origin,
+          code: qr?.code ?? _code.text,
+          expectedDesktopId: qr?.desktopId,
+          syncTheme: _theme,
+        );
+    final isAdditionalDesktop = expected != null &&
+        qr?.desktopId != null &&
+        qr!.desktopId != expected.desktopId;
+    if (isAdditionalDesktop) {
+      // Pause/drain iOS transfer work, but retain the existing desktop's
+      // native pairing scope and queued jobs.
+      await IosTransferRoot.withMutationBarrier(context, mutation);
+    } else {
+      await IosTransferRoot.withPairingRetirement(
+        context,
+        expected: expected,
+        mutation: mutation,
+      );
+    }
     _code.clear();
     await _saveOption('send_downloads', _sendDownloads);
     final paired = await ref.read(lokalRemoteControllerProvider.notifier)
