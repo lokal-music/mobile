@@ -713,6 +713,15 @@ class _LokalDesktopLinkScreenState
                       ),
                     ],
                   ),
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: OutlinedButton.icon(
+                      onPressed: _busy ? null : _scan,
+                      icon: const Icon(Icons.add_link_rounded),
+                      label: Text(lokalText('Pair another desktop')),
+                    ),
+                  ),
                 ],
               ),
             ),
