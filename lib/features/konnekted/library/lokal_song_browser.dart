@@ -16,6 +16,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'lokal_library_kit.dart';
 import 'lokal_song_filter.dart';
+import 'package:flick/features/search/library_search_matcher.dart';
 
 import 'package:flick/widgets/lokal/lokal_quality.dart';
 
@@ -315,13 +316,11 @@ class _LokalSongBrowserState extends ConsumerState<LokalSongBrowser> {
         _visibleCache != null) {
       return _visibleCache!;
     }
+    final words = librarySearchWords(query);
     final songs = [
       for (final song in widget.songs)
         if (matchesLibraryFilters(song, _location, _audioFilter) &&
-            (query.isEmpty ||
-                '${song.title}\n${song.artist}\n${song.album ?? ''}'
-                    .toLowerCase()
-                    .contains(query)))
+            (words.isEmpty || songMatchesLibraryQuery(song, words)))
           song,
     ];
     // Lowercasing inside the sort comparator repeatedly allocates strings.

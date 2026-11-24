@@ -1,4 +1,5 @@
 import 'local_device_search.dart';
+import '../library_search_matcher.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flick/core/utils/string_sort_utils.dart';
 import 'package:flick/data/repositories/song_repository.dart';
@@ -34,11 +35,23 @@ final globalSearchResultsProvider =
     allPlaylists = asyncPlaylists.value?.playlists ?? const [];
   }
 
-  // --- Songs: title contains ---
+  // --- Songs: Desktop parity (`electron/librarySearch.js#searchTracks`).
+  // Every query word must appear in title, artist, album or album artist (any
+  // order). Whole-phrase title matches rank first, then whole-phrase matches in
+  // other fields, then word-only matches; ties sort by title.
+  final words = librarySearchWords(query);
+  final songRanks = Map<Song, int>.identity();
   final songs = allSongs
-      .where((s) => s.title.toLowerCase().contains(lower))
-      .toList()
-    ..sort((a, b) => compareCaseInsensitive(a.title, b.title));
+      .where((s) => songMatchesLibraryQuery(s, words))
+      .toList();
+  for (final s in songs) {
+    songRanks[s] = songLibraryMatchRank(s, lower);
+  }
+  songs.sort((a, b) {
+    final r = songRanks[a]!.compareTo(songRanks[b]!);
+    if (r != 0) return r;
+    return compareCaseInsensitive(a.title, b.title);
+  });
 
   // --- Artists: distinct artist names where artist contains ---
   final artistMap = <String, List<Song>>{};
@@ -77,7 +90,13 @@ final globalSearchResultsProvider =
     final albumName = s.album?.trim().isNotEmpty == true
         ? s.album!.trim()
         : l10n.unknownAlbum;
-    if (!albumName.toLowerCase().contains(lower)) continue;
+    if (!libraryWordsMatch(words, <String>[
+      albumName.toLowerCase(),
+      SongRepository.albumArtistForSong(s).toLowerCase(),
+      s.artist.toLowerCase(),
+    ])) {
+      continue;
+    }
     final key = '${albumName.toLowerCase()}\u0000${SongRepository.albumArtistForSong(s).toLowerCase()}';
     albumGroupsRaw.putIfAbsent(key, () => []).add(s);
     albumNames[key] = albumName;
