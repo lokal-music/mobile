@@ -42,7 +42,12 @@ import 'package:flutter/widgets.dart'
 import '../models/lokal_remote_state.dart';
 import '../l10n/l10n.dart';
 import '../services/lokal_remote_credentials_store.dart';
+import '../services/lokal_paired_desktops_store.dart';
 import '../services/lokal_remote_service.dart';
+
+final lokalPairedDesktopsStoreProvider = Provider<LokalPairedDesktopsStore>(
+  (ref) => LokalPairedDesktopsStore(),
+);
 
 final lokalRemoteCredentialsStoreProvider =
     Provider<LokalRemoteCredentialsStore>(
@@ -216,6 +221,10 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
           credentials == null)
         return;
       _credentials = credentials;
+      await ref.read(lokalPairedDesktopsStoreProvider).readAll(
+        legacyActive: credentials,
+      );
+      if (_disposed || revision != _configurationRevision) return;
       state = state.copyWith(
         config: LokalRemoteConfig.fromCredentials(credentials),
         status: LokalRemoteConnectionStatus.disconnected,
@@ -280,9 +289,29 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
     }
     // Read/compare/clear is serialized with writes by the same credential
     // store. A stale confirmation cannot erase a newly-paired desktop.
-    await ref
-        .read(lokalRemoteCredentialsStoreProvider)
-        .clearIfMatching(expected);
+    if (expected != null) {
+      final fallback = await ref
+          .read(lokalPairedDesktopsStoreProvider)
+          .remove(expected);
+      if (_disposed || revision != _configurationRevision) return;
+      disconnect();
+      _generation++;
+      _shouldPoll = false;
+      _pollTimer?.cancel();
+      if (fallback != null) {
+        await ref.read(lokalRemoteCredentialsStoreProvider).write(fallback);
+        if (_disposed || revision != _configurationRevision) return;
+        _credentials = await ref.read(lokalRemoteCredentialsStoreProvider).read();
+        ref.invalidate(linkedDesktopProfileProvider);
+        state = LokalRemoteControllerState(
+          config: LokalRemoteConfig.fromCredentials(fallback),
+          status: LokalRemoteConnectionStatus.disconnected,
+        );
+        await connect();
+        return;
+      }
+    }
+    await ref.read(lokalRemoteCredentialsStoreProvider).clearIfMatching(expected);
     if (_disposed || revision != _configurationRevision) return;
     disconnect();
     _generation++;
@@ -459,6 +488,8 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
           expectedDesktopId: expectedDesktopId,
         );
     if (_disposed || revision != _configurationRevision) return;
+    await ref.read(lokalPairedDesktopsStoreProvider).add(credentials);
+    if (_disposed || revision != _configurationRevision) return;
     disconnect();
     await ref.read(lokalRemoteCredentialsStoreProvider).write(credentials);
     if (_disposed || revision != _configurationRevision) return;
@@ -471,6 +502,35 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
     ref.invalidate(linkedDesktopProfileProvider);
     state = LokalRemoteControllerState(
       config: LokalRemoteConfig.fromCredentials(credentials),
+    );
+    await connect();
+  }
+
+  Future<List<LokalPairedDesktop>> pairedDesktops() async {
+    await _ensureRestored();
+    final active = await ref.read(lokalRemoteCredentialsStoreProvider).read();
+    return ref.read(lokalPairedDesktopsStoreProvider).readAll(
+      legacyActive: active,
+    );
+  }
+
+  Future<void> switchDesktop(String desktopId) async {
+    await _ensureRestored();
+    if (_syncInFlight || _statsSyncInFlight || state.fileCopyProgress.busy) {
+      throw StateError('Wait for the current desktop sync or file copy to finish.');
+    }
+    final credentials = await ref
+        .read(lokalPairedDesktopsStoreProvider)
+        .select(desktopId);
+    if (credentials == null) throw StateError('This desktop is no longer paired.');
+    disconnect();
+    await ref.read(lokalRemoteCredentialsStoreProvider).write(credentials);
+    _credentials = await ref.read(lokalRemoteCredentialsStoreProvider).read();
+    if (_credentials == null) throw StateError('Could not activate this desktop.');
+    ref.invalidate(linkedDesktopProfileProvider);
+    state = LokalRemoteControllerState(
+      config: LokalRemoteConfig.fromCredentials(_credentials!),
+      status: LokalRemoteConnectionStatus.disconnected,
     );
     await connect();
   }
