@@ -46,14 +46,41 @@ class LokalPairedDesktopsStore {
   Future<List<LokalPairedDesktop>> readAll({
     LokalRemoteCredentials? legacyActive,
   }) => _serial(() async {
+    final raw = await _storage.read(key: storageKey);
     final entries = await _readEntries();
-    if (entries.isEmpty && legacyActive != null) {
+    // Only migrate when this registry has never been created. An intentionally
+    // empty registry means the user forgot the final desktop and must not
+    // resurrect it from the legacy active-session record.
+    if (raw == null && legacyActive != null) {
       final id = identity(legacyActive);
       final migrated = _entry(legacyActive, id: id);
       await _writeEntries([migrated], activeId: id);
       return [migrated];
     }
     return entries;
+  });
+
+  Future<LokalRemoteCredentials?> resolveActive({
+    LokalRemoteCredentials? legacyActive,
+  }) => _serial(() async {
+    final raw = await _storage.read(key: storageKey);
+    final entries = await _readEntries();
+    if (raw == null) {
+      if (legacyActive == null) return null;
+      final id = identity(legacyActive);
+      await _writeEntries([_entry(legacyActive, id: id)], activeId: id);
+      return legacyActive;
+    }
+    if (entries.isEmpty) return null;
+    String? active;
+    try {
+      final data = jsonDecode(raw);
+      active = data is Map ? data['activeId'] as String? : null;
+    } on Object {}
+    for (final entry in entries) {
+      if (entry.id == active) return entry.credentials;
+    }
+    return entries.last.credentials;
   });
 
   Future<String?> activeId() => _serial(() async {
