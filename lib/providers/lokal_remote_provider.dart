@@ -309,36 +309,51 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
     if (_disposed || revision != _configurationRevision) {
       throw StateError('Desktop pairing changed. Refresh and retry.');
     }
-    // Read/compare/clear is serialized with writes by the same credential
-    // store. A stale confirmation cannot erase a newly-paired desktop.
+    var vaultAvailable = true;
+    LokalRemoteCredentials? fallback;
     if (expected != null) {
-      LokalRemoteCredentials? fallback;
       try {
         fallback = await ref
             .read(lokalPairedDesktopsStoreProvider)
             .remove(expected);
       } on MissingPluginException {
-        // Fall back to the original single-pair removal on unsupported runners.
+        vaultAvailable = false;
+      }
+      if (_disposed || revision != _configurationRevision) return;
+    }
+    if (fallback != null) {
+      try {
+        await ref.read(lokalRemoteCredentialsStoreProvider).write(fallback);
+      } catch (_) {
+        if (vaultAvailable && expected != null) {
+          await ref.read(lokalPairedDesktopsStoreProvider).add(expected);
+        }
+        rethrow;
       }
       if (_disposed || revision != _configurationRevision) return;
       disconnect();
       _generation++;
       _shouldPoll = false;
       _pollTimer?.cancel();
-      if (fallback != null) {
-        await ref.read(lokalRemoteCredentialsStoreProvider).write(fallback);
-        if (_disposed || revision != _configurationRevision) return;
-        _credentials = await ref.read(lokalRemoteCredentialsStoreProvider).read();
-        ref.invalidate(linkedDesktopProfileProvider);
-        state = LokalRemoteControllerState(
-          config: LokalRemoteConfig.fromCredentials(fallback),
-          status: LokalRemoteConnectionStatus.disconnected,
-        );
-        await connect();
-        return;
-      }
+      _credentials = fallback;
+      ref.invalidate(linkedDesktopProfileProvider);
+      state = LokalRemoteControllerState(
+        config: LokalRemoteConfig.fromCredentials(fallback),
+        status: LokalRemoteConnectionStatus.disconnected,
+      );
+      await connect();
+      return;
     }
-    await ref.read(lokalRemoteCredentialsStoreProvider).clearIfMatching(expected);
+    try {
+      await ref
+          .read(lokalRemoteCredentialsStoreProvider)
+          .clearIfMatching(expected);
+    } catch (_) {
+      if (vaultAvailable && expected != null) {
+        await ref.read(lokalPairedDesktopsStoreProvider).add(expected);
+      }
+      rethrow;
+    }
     if (_disposed || revision != _configurationRevision) return;
     disconnect();
     _generation++;
