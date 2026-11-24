@@ -18,6 +18,7 @@ import '../../providers/lokal_remote_provider.dart';
 import '../../providers/ios_transfer_provider.dart';
 import '../../services/link/lokal_link_service.dart';
 import '../../services/lokal_remote_service.dart';
+import '../../services/lokal_paired_desktops_store.dart';
 import '../../widgets/lokal/settings/lokal_settings_kit.dart';
 import '../../widgets/common/ios_transfer_root.dart';
 import '../settings/screens/lokal_remote_settings_screen.dart';
@@ -34,6 +35,7 @@ class _LokalDesktopLinkScreenState
     extends ConsumerState<LokalDesktopLinkScreen> {
   final _address = TextEditingController(), _code = TextEditingController();
   List<LokalDiscoveredDesktop> _desktops = [];
+  List<LokalPairedDesktop> _pairedDesktops = [];
   bool _busy = false,
       _discovering = false,
       _theme = false,
@@ -51,12 +53,16 @@ class _LokalDesktopLinkScreenState
 
   Future<void> _loadOptions() async {
     final prefs = await SharedPreferences.getInstance();
-    final id =
-        (await ref.read(lokalRemoteCredentialsStoreProvider).read())?.desktopId;
+    final activeCredentials =
+        await ref.read(lokalRemoteCredentialsStoreProvider).read();
+    final id = activeCredentials?.desktopId;
+    final paired = await ref.read(lokalRemoteControllerProvider.notifier)
+        .pairedDesktops();
     final folders = await MusicFolderService().getSavedFolders();
     if (mounted)
       setState(() {
         _copyFolders = folders;
+        _pairedDesktops = paired;
         _copyFolderUri = prefs.getString(DesktopMusicStorage.destinationKey);
         _theme = prefs.getBool('lokal.link.$id.theme') ?? false;
         _sendDownloads =
@@ -510,6 +516,9 @@ class _LokalDesktopLinkScreenState
     );
     _code.clear();
     await _saveOption('send_downloads', _sendDownloads);
+    final paired = await ref.read(lokalRemoteControllerProvider.notifier)
+        .pairedDesktops();
+    if (mounted) setState(() => _pairedDesktops = paired);
   });
   Future<void> _scan() async {
     final value = await Navigator.of(
@@ -559,6 +568,58 @@ class _LokalDesktopLinkScreenState
               link.transferMessage!,
               style: TextStyle(
                 color: link.transferHasError ? t.accent : t.muted,
+              ),
+            ),
+          ),
+        if (_pairedDesktops.length > 1)
+          LokalSettingsBlock(
+            child: LokalSettingsCard(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                    child: Text(
+                      lokalText('Paired desktops'),
+                      style: TextStyle(
+                        color: t.text,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  for (final desktop in _pairedDesktops)
+                    Builder(builder: (context) {
+                      final activeId = LokalPairedDesktopsStore.identity(
+                        (desktop.id == LokalPairedDesktopsStore.identity(
+                          desktop.credentials,
+                        ))
+                            ? desktop.credentials
+                            : desktop.credentials,
+                      );
+                      final active = link.config?.origin ==
+                          desktop.credentials.origin;
+                      return ListTile(
+                        leading: Icon(
+                          Icons.desktop_windows_rounded,
+                          color: active ? t.accent : t.muted,
+                        ),
+                        title: Text(desktop.name),
+                        subtitle: Text(desktop.credentials.origin.authority),
+                        trailing: active
+                            ? Text(lokalText('Active'))
+                            : const Icon(Icons.swap_horiz_rounded),
+                        onTap: active || _busy
+                            ? null
+                            : () => _run(() async {
+                                await controller.switchDesktop(desktop.id);
+                                final paired = await controller.pairedDesktops();
+                                if (mounted) setState(() => _pairedDesktops = paired);
+                                await _loadOptions();
+                              }),
+                      );
+                    }),
+                ],
               ),
             ),
           ),
@@ -652,6 +713,8 @@ class _LokalDesktopLinkScreenState
                                           expected: expected,
                                         ),
                                   );
+                                  final paired = await controller.pairedDesktops();
+                                  if (mounted) setState(() => _pairedDesktops = paired);
                                 }
                               }),
                         child: Text(l10n.linkForget),
