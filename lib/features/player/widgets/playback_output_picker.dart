@@ -23,7 +23,8 @@ class PlaybackOutputPicker extends ConsumerStatefulWidget {
   static Future<void> show(BuildContext context) => showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
-    showDragHandle: true,
+    enableDrag: false,
+    showDragHandle: false,
     builder: (context) => const PlaybackOutputPicker(),
   );
 
@@ -185,24 +186,25 @@ class _PlaybackOutputPickerState extends ConsumerState<PlaybackOutputPicker> {
             item.id != active.id || item.backend != active.backend,
       ),
     ];
-     return SafeArea(
+    return SafeArea(
       top: false,
       child: ConstrainedBox(
         constraints: BoxConstraints(
           maxHeight: MediaQuery.sizeOf(context).height * .76,
         ),
-        child: ListView(
-          shrinkWrap: true,
-          padding: const EdgeInsets.only(bottom: 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 12, 6),
+              padding: const EdgeInsets.fromLTRB(20, 12, 12, 6),
               child: Row(
                 children: [
-                  Expanded(child: Text(
-                    l10n.outputDevice,
-                    style: Theme.of(context).textTheme.titleLarge,
-                  )),
+                  Expanded(
+                    child: Text(
+                      l10n.outputDevice,
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                  ),
                   if (_refreshing)
                     const Padding(
                       padding: EdgeInsets.all(10),
@@ -223,20 +225,23 @@ class _PlaybackOutputPickerState extends ConsumerState<PlaybackOutputPicker> {
             if (_error != null)
               Padding(
                 padding: const EdgeInsets.fromLTRB(20, 2, 20, 12),
-                child: Text(_error!, style: TextStyle(
-                  color: Theme.of(context).colorScheme.error,
-                  fontSize: 13,
-                )),
+                child: Text(
+                  _error!,
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.error,
+                    fontSize: 13,
+                  ),
+                ),
               ),
             ValueListenableBuilder<AndroidPlaybackDeviceInfo>(
-              valueListenable: AndroidAudioDeviceService.instance.mediaOutputInfoNotifier,
+              valueListenable: AndroidAudioDeviceService
+                  .instance.mediaOutputInfoNotifier,
               builder: (context, media, _) {
-                final knownMedia = Platform.isAndroid && media.routeType != null;
-                // Do not optimistically check the phone while Android is
-                // still resolving the real media route. Bluetooth may already
-                // be playing even before MediaRouter's inventory arrives.
+                final knownMedia =
+                    Platform.isAndroid && media.routeType != null;
                 final phoneSelected = active == null &&
-                    (Platform.isIOS || (knownMedia && media.isInternalRoute));
+                    (Platform.isIOS ||
+                        (knownMedia && media.isInternalRoute));
                 return Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -247,7 +252,8 @@ class _PlaybackOutputPickerState extends ConsumerState<PlaybackOutputPicker> {
                       subtitle: Text(lokalText('Play on this phone')),
                       selected: phoneSelected,
                       trailing: phoneSelected
-                          ? const Icon(Icons.check_rounded) : null,
+                          ? const Icon(Icons.check_rounded)
+                          : null,
                       enabled: !busy,
                       onTap: _returnToPhone,
                     ),
@@ -256,87 +262,122 @@ class _PlaybackOutputPickerState extends ConsumerState<PlaybackOutputPicker> {
                         key: const ValueKey('output-picker-system'),
                         leading: const Icon(Icons.headphones_rounded),
                         title: Text(lokalText('AirPlay and headphones')),
-                        subtitle: Text(lokalText('Choose a local audio output')),
+                        subtitle: Text(
+                          lokalText('Choose a local audio output'),
+                        ),
                         enabled: !busy,
                         onTap: _systemOutputs,
                         trailing: const Icon(Icons.chevron_right_rounded),
                       ),
                     if (Platform.isAndroid)
                       for (final route in _localRoutes)
-                        Builder(builder: (context) {
-                          final type = route['type'] as String? ?? '';
-                          final selected = active == null &&
-                              route['selected'] == true &&
-                              (!knownMedia ||
-                                (media.isBluetoothRoute &&
-                                    type == 'Bluetooth') ||
-                                (media.isUsbRoute && type == 'USB') ||
-                                (media.isWiredRoute && type == 'Wired') ||
-                                (media.isDockRoute && type == 'Dock') ||
-                                (media.isInternalRoute && type == 'Speaker'));
-                          return ListTile(
-                            key: ValueKey('output-picker-local-${route['id']}'),
-                            leading: Icon(type == 'Bluetooth'
-                                ? Icons.headphones_rounded
-                                : Icons.speaker_rounded),
-                            title: Text(route['name'] as String? ?? l10n.output),
-                            subtitle: Text(type),
-                            selected: selected,
-                            trailing: selected
-                                ? const Icon(Icons.check_rounded) : null,
-                            enabled: !busy,
-                            onTap: () => _selectLocal(route),
-                          );
-                        }),
+                        Builder(
+                          builder: (context) {
+                            final type = route['type'] as String? ?? '';
+                            final selected = active == null &&
+                                route['selected'] == true &&
+                                (!knownMedia ||
+                                    (media.isBluetoothRoute &&
+                                        type == 'Bluetooth') ||
+                                    (media.isUsbRoute && type == 'USB') ||
+                                    (media.isWiredRoute && type == 'Wired') ||
+                                    (media.isDockRoute && type == 'Dock') ||
+                                    (media.isInternalRoute &&
+                                        type == 'Speaker'));
+                            return ListTile(
+                              key: ValueKey(
+                                'output-picker-local-${route['id']}',
+                              ),
+                              leading: Icon(type == 'Bluetooth'
+                                  ? Icons.headphones_rounded
+                                  : Icons.speaker_rounded),
+                              title: Text(
+                                route['name'] as String? ?? l10n.output,
+                              ),
+                              subtitle: Text(type),
+                              selected: selected,
+                              trailing: selected
+                                  ? const Icon(Icons.check_rounded)
+                                  : null,
+                              enabled: !busy,
+                              onTap: () => _selectLocal(route),
+                            );
+                          },
+                        ),
                   ],
                 );
               },
             ),
-            const Divider(),
+            const Divider(height: 1),
             Padding(
-              padding: const EdgeInsets.fromLTRB(20, 10, 20, 6),
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 6),
               child: Text(
                 l10n.availableDevices,
                 style: Theme.of(context).textTheme.titleSmall,
               ),
             ),
-            if (devices.isEmpty)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 8, 20, 18),
-                child: Text(
-                  _refreshing ? l10n.searchingTheLocalNetwork
-                      : l10n.noCastingDevicesFoundMakeSure,
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              )
-            else
-              for (final device in devices)
-                ListTile(
-                  key: ValueKey('output-picker-cast-${device.backend.name}-${device.id}'),
-                  leading: Icon(device.backend == CastBackend.chromecast
-                      ? LucideIcons.cast : LucideIcons.radio),
-                  title: Text(device.name),
-                  subtitle: Text(device.backend == CastBackend.chromecast
-                      ? l10n.chromecast : l10n.dlnaUpnp),
-                  selected: active?.id == device.id &&
-                      active?.backend == device.backend,
-                  trailing: active?.id == device.id &&
-                          active?.backend == device.backend
-                      ? const Icon(Icons.check_rounded)
-                      : null,
-                  enabled: !busy,
-                  onTap: () => _run(() =>
-                      ref.read(castProvider.notifier).connect(device)),
-                ),
-            if (active != null)
-              ListTile(
-                key: const ValueKey('output-picker-abandon'),
-                leading: const Icon(Icons.phonelink_off_rounded),
-                title: Text(lokalText('Return to phone if receiver is unreachable')),
-                subtitle: Text(lokalText('Keep phone playback paused')),
-                enabled: !busy,
-                onTap: _abandonReceiver,
+            Flexible(
+              child: ListView(
+                padding: const EdgeInsets.only(bottom: 16),
+                children: [
+                  if (devices.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 8, 20, 18),
+                      child: Text(
+                        _refreshing
+                            ? l10n.searchingTheLocalNetwork
+                            : l10n.noCastingDevicesFoundMakeSure,
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    )
+                  else
+                    for (final device in devices)
+                      ListTile(
+                        key: ValueKey(
+                          'output-picker-cast-${device.backend.name}-${device.id}',
+                        ),
+                        leading: Icon(
+                          device.backend == CastBackend.chromecast
+                              ? LucideIcons.cast
+                              : LucideIcons.radio,
+                        ),
+                        title: Text(device.name),
+                        subtitle: Text(
+                          device.backend == CastBackend.chromecast
+                              ? l10n.chromecast
+                              : l10n.dlnaUpnp,
+                        ),
+                        selected: active?.id == device.id &&
+                            active?.backend == device.backend,
+                        trailing: active?.id == device.id &&
+                                active?.backend == device.backend
+                            ? const Icon(Icons.check_rounded)
+                            : null,
+                        enabled: !busy,
+                        onTap: () => _run(
+                          () => ref
+                              .read(castProvider.notifier)
+                              .connect(device),
+                        ),
+                      ),
+                  if (active != null)
+                    ListTile(
+                      key: const ValueKey('output-picker-abandon'),
+                      leading: const Icon(Icons.phonelink_off_rounded),
+                      title: Text(
+                        lokalText(
+                          'Return to phone if receiver is unreachable',
+                        ),
+                      ),
+                      subtitle: Text(
+                        lokalText('Keep phone playback paused'),
+                      ),
+                      enabled: !busy,
+                      onTap: _abandonReceiver,
+                    ),
+                ],
               ),
+            ),
           ],
         ),
       ),
