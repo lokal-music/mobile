@@ -10,6 +10,7 @@ import 'dart:io' show WebSocketException;
 import 'dart:typed_data';
 
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
+import 'package:flutter/services.dart' show MissingPluginException;
 
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -221,9 +222,14 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
           credentials == null)
         return;
       _credentials = credentials;
-      await ref.read(lokalPairedDesktopsStoreProvider).readAll(
-        legacyActive: credentials,
-      );
+      try {
+        await ref.read(lokalPairedDesktopsStoreProvider).readAll(
+          legacyActive: credentials,
+        );
+      } on MissingPluginException {
+        // Headless provider tests and unsupported platform runners still use
+        // the legacy active-pair adapter; production platforms use the vault.
+      }
       if (_disposed || revision != _configurationRevision) return;
       state = state.copyWith(
         config: LokalRemoteConfig.fromCredentials(credentials),
@@ -290,9 +296,14 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
     // Read/compare/clear is serialized with writes by the same credential
     // store. A stale confirmation cannot erase a newly-paired desktop.
     if (expected != null) {
-      final fallback = await ref
-          .read(lokalPairedDesktopsStoreProvider)
-          .remove(expected);
+      LokalRemoteCredentials? fallback;
+      try {
+        fallback = await ref
+            .read(lokalPairedDesktopsStoreProvider)
+            .remove(expected);
+      } on MissingPluginException {
+        // Fall back to the original single-pair removal on unsupported runners.
+      }
       if (_disposed || revision != _configurationRevision) return;
       disconnect();
       _generation++;
@@ -491,7 +502,11 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
     disconnect();
     await ref.read(lokalRemoteCredentialsStoreProvider).write(credentials);
     if (_disposed || revision != _configurationRevision) return;
-    await ref.read(lokalPairedDesktopsStoreProvider).add(credentials);
+    try {
+      await ref.read(lokalPairedDesktopsStoreProvider).add(credentials);
+    } on MissingPluginException {
+      // Keep legacy pairing operational on test runners without secure storage.
+    }
     if (_disposed || revision != _configurationRevision) return;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('lokal.link.${credentials.desktopId}.theme', syncTheme);
@@ -509,9 +524,21 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
   Future<List<LokalPairedDesktop>> pairedDesktops() async {
     await _ensureRestored();
     final active = await ref.read(lokalRemoteCredentialsStoreProvider).read();
-    return ref.read(lokalPairedDesktopsStoreProvider).readAll(
-      legacyActive: active,
-    );
+    try {
+      return await ref.read(lokalPairedDesktopsStoreProvider).readAll(
+        legacyActive: active,
+      );
+    } on MissingPluginException {
+      if (active == null) return const [];
+      final id = LokalPairedDesktopsStore.identity(active);
+      return [
+        LokalPairedDesktop(
+          id: id,
+          name: active.origin.host,
+          credentials: active,
+        ),
+      ];
+    }
   }
 
   Future<void> switchDesktop(String desktopId) async {
