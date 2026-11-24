@@ -112,7 +112,10 @@ class LokalPairedDesktopsStore {
         ? (entries.isEmpty ? null : entries.last.id)
         : active;
     await _writeEntries(entries, activeId: nextActive);
-    return entries.firstWhereOrNull((entry) => entry.id == nextActive)?.credentials;
+    for (final entry in entries) {
+      if (entry.id == nextActive) return entry.credentials;
+    }
+    return null;
   });
 
   Future<List<LokalPairedDesktop>> _readEntries() async {
@@ -205,11 +208,3 @@ class SecureCredentialComparison {
       a.apiKey == b.apiKey;
 }
 
-extension on List<LokalPairedDesktop> {
-  T? firstWhereOrNull<T>(T Function(LokalPairedDesktop) test) {
-    for (final value in this) {
-      if (test(value)) return value as T;
-    }
-    return null;
-  }
-}
