@@ -488,10 +488,10 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
           expectedDesktopId: expectedDesktopId,
         );
     if (_disposed || revision != _configurationRevision) return;
-    await ref.read(lokalPairedDesktopsStoreProvider).add(credentials);
-    if (_disposed || revision != _configurationRevision) return;
     disconnect();
     await ref.read(lokalRemoteCredentialsStoreProvider).write(credentials);
+    if (_disposed || revision != _configurationRevision) return;
+    await ref.read(lokalPairedDesktopsStoreProvider).add(credentials);
     if (_disposed || revision != _configurationRevision) return;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('lokal.link.${credentials.desktopId}.theme', syncTheme);
