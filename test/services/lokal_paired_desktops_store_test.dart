@@ -45,6 +45,19 @@ void main() {
     expect(await store.activeId(), 'desktop-two');
   });
 
+  test('an intentionally empty registry does not resurrect a forgotten legacy pair', () async {
+    final store = LokalPairedDesktopsStore(storage: storage);
+    final legacy = LokalRemoteCredentials(
+      origin: Uri.parse('http://forgotten-pc:3421'),
+      desktopId: 'forgotten-desktop',
+      remoteToken: 'synthetic-forgotten-token',
+    );
+    await store.add(legacy);
+    await store.remove(legacy);
+    expect(await store.resolveActive(legacyActive: legacy), isNull);
+    expect(await store.readAll(legacyActive: legacy), isEmpty);
+  });
+
   test('migrates an existing single desktop without changing its credentials', () async {
     final store = LokalPairedDesktopsStore(storage: storage);
     final legacy = LokalRemoteCredentials(
