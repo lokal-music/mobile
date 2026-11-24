@@ -93,6 +93,7 @@ final globalSearchResultsProvider =
     if (!libraryWordsMatch(words, <String>[
       albumName.toLowerCase(),
       SongRepository.albumArtistForSong(s).toLowerCase(),
+      (s.albumArtist ?? '').toLowerCase(),
       s.artist.toLowerCase(),
     ])) {
       continue;
