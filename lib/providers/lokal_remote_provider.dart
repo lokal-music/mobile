@@ -515,15 +515,27 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
           expectedDesktopId: expectedDesktopId,
         );
     if (_disposed || revision != _configurationRevision) return;
-    disconnect();
+    final vault = ref.read(lokalPairedDesktopsStoreProvider);
+    String? previousDesktopId;
+    var vaultAvailable = true;
     try {
-      await ref.read(lokalPairedDesktopsStoreProvider).add(credentials);
+      previousDesktopId = await vault.activeId();
+      await vault.add(credentials);
     } on MissingPluginException {
+      vaultAvailable = false;
       // Keep legacy pairing operational on test runners without secure storage.
     }
     if (_disposed || revision != _configurationRevision) return;
-    await ref.read(lokalRemoteCredentialsStoreProvider).write(credentials);
+    try {
+      await ref.read(lokalRemoteCredentialsStoreProvider).write(credentials);
+    } catch (_) {
+      if (vaultAvailable && previousDesktopId != null) {
+        await vault.select(previousDesktopId);
+      }
+      rethrow;
+    }
     if (_disposed || revision != _configurationRevision) return;
+    disconnect();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('lokal.link.${credentials.desktopId}.theme', syncTheme);
     if (_disposed || revision != _configurationRevision) return;
@@ -566,14 +578,18 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
         state.fileCopyProgress.busy) {
       throw StateError('Wait for the current desktop sync or file copy to finish.');
     }
-    final credentials = await ref
-        .read(lokalPairedDesktopsStoreProvider)
-        .select(desktopId);
+    final vault = ref.read(lokalPairedDesktopsStoreProvider);
+    final previousDesktopId = await vault.activeId();
+    final credentials = await vault.select(desktopId);
     if (credentials == null) throw StateError('This desktop is no longer paired.');
+    try {
+      await ref.read(lokalRemoteCredentialsStoreProvider).write(credentials);
+    } catch (_) {
+      if (previousDesktopId != null) await vault.select(previousDesktopId);
+      rethrow;
+    }
     disconnect();
-    await ref.read(lokalRemoteCredentialsStoreProvider).write(credentials);
-    _credentials = await ref.read(lokalRemoteCredentialsStoreProvider).read();
-    if (_credentials == null) throw StateError('Could not activate this desktop.');
+    _credentials = credentials;
     ref.invalidate(linkedDesktopProfileProvider);
     state = LokalRemoteControllerState(
       config: LokalRemoteConfig.fromCredentials(_credentials!),
