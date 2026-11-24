@@ -810,6 +810,12 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
         }
         if (_disposed || generation != _generation) return;
         _credentials = relocated;
+        try {
+          await ref.read(lokalPairedDesktopsStoreProvider).add(relocated);
+        } on MissingPluginException {
+          // Legacy-only runners do not have the secure multi-pairing vault.
+        }
+        if (_disposed || generation != _generation) return;
         state = state.copyWith(
           config: LokalRemoteConfig.fromCredentials(relocated),
         );
