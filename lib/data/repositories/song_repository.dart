@@ -753,8 +753,19 @@ class SongRepository {
   }
 
   /// Watch for changes in the songs collection.
+  ///
+  /// Uses [Stream.multi] so each listener (including after an `autoDispose`
+  /// provider is disposed and recreated) opens its own Isar watcher instead of
+  /// failing on a previously cancelled single-subscription stream.
   Stream<void> watchSongs() {
-    return _isar.songEntitys.watchLazy();
+    return Stream<void>.multi((controller) {
+      final subscription = _isar.songEntitys.watchLazy().listen(
+        controller.add,
+        onError: controller.addError,
+        onDone: controller.close,
+      );
+      controller.onCancel = subscription.cancel;
+    });
   }
 
   /// Convert entity to Song model.

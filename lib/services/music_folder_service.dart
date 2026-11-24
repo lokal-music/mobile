@@ -263,29 +263,46 @@ class MusicFolderService {
   static const _prefKey = 'music_folders';
 
   final PermissionService _permissionService;
+  final FolderRepository Function() _foldersRepo;
   final FileFingerprintCache _fingerprintCache = FileFingerprintCache();
 
-  MusicFolderService({PermissionService? permissionService})
-    : _permissionService = permissionService ?? PermissionService();
+  MusicFolderService({
+    PermissionService? permissionService,
+    FolderRepository? folderRepository,
+  }) : _permissionService = permissionService ?? PermissionService(),
+       _foldersRepo = folderRepository != null
+           ? (() => folderRepository)
+           : FolderRepository.new;
 
   /// Add a new music folder using the system folder picker.
-  /// Returns the added folder, or null if cancelled.
-  /// Throws [FolderAlreadyExistsException] if the folder is already added.
+  /// Returns the added (or re-selected existing) folder, or null if cancelled.
+  /// Throws [FolderAlreadyExistsException] if a different overlapping folder is chosen.
   Future<MusicFolder?> addFolder() async {
     // Open folder picker
     final uri = await _permissionService.openFolderPicker();
     if (uri == null) return null;
 
+    final normalizedPicked = normalizeFolderIdentifier(uri);
+
     // Check if folder already exists
     final existingFolders = await getSavedFolders();
     for (final folder in existingFolders) {
-      if (folder.uri == uri) {
-        // iOS imports copies into one app-owned library root. Importing more
-        // files into it should rescan that root, preserving library identity.
-        if (Platform.isIOS) return folder;
-        throw FolderAlreadyExistsException(
-          'This folder has already been added',
-        );
+      final isSameFolder =
+          folder.uri == uri ||
+          normalizeFolderIdentifier(folder.uri) == normalizedPicked;
+      if (isSameFolder) {
+        if (!Platform.isIOS) {
+          // Refresh the persistable SAF grant so a previously added folder
+          // (e.g. after clearing the library) can be rescanned cleanly.
+          final success = await _permissionService.takePersistablePermission(
+            uri,
+          );
+          if (!success) {
+            throw StorageException('Failed to persist folder access');
+          }
+        }
+        await _ensureFolderInDatabase(folder);
+        return folder;
       }
       if (foldersOverlap(folder.uri, uri)) {
         throw FolderAlreadyExistsException(
@@ -321,6 +338,13 @@ class MusicFolderService {
     await _saveFolderToDatabase(folder);
 
     return folder;
+  }
+
+  Future<void> _ensureFolderInDatabase(MusicFolder folder) async {
+    final existing = await _foldersRepo().getFolderByUri(folder.uri);
+    if (existing == null) {
+      await _saveFolderToDatabase(folder);
+    }
   }
 
   /// Adds a folder the app itself writes to (Lokal's Downloads folder), by
@@ -378,7 +402,7 @@ class MusicFolderService {
     // Overlay live volume state from the DB; prefs only captures add-time
     // state, while the scanner updates isRemovable/volumeState in the entity.
     final entities = {
-      for (final e in await FolderRepository().getAllFolders()) e.uri: e,
+      for (final e in await _foldersRepo().getAllFolders()) e.uri: e,
     };
 
     final folders = <MusicFolder>[];
@@ -777,7 +801,7 @@ class MusicFolderService {
       jsonDecode(json) as Map<String, dynamic>;
 
   Future<void> _saveFolderToDatabase(MusicFolder folder) async {
-    final repository = FolderRepository();
+    final repository = _foldersRepo();
     final entity = FolderEntity()
       ..uri = folder.uri
       ..displayName = folder.displayName
@@ -790,7 +814,7 @@ class MusicFolderService {
   }
 
   Future<void> _removeFolderFromDatabase(String uri) async {
-    final repository = FolderRepository();
+    final repository = _foldersRepo();
     await repository.deleteFolder(uri);
   }
 

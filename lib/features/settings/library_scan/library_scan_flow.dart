@@ -105,6 +105,14 @@ abstract final class LibraryScanFlow {
 
   static final MusicFolderService _folders = MusicFolderService();
 
+  /// Cancels any active scan session or detached post-scan enrichment task.
+  static void cancelActiveScan() {
+    if (ScanSessionController.instance.isActive) {
+      ScanSessionController.instance.stop();
+    }
+    _scannerInstance?.cancelScan();
+  }
+
   /// Opens the system folder picker, saves the folder and scans it.
   ///
   /// Returns the folder that was added, or `null` when nothing was.

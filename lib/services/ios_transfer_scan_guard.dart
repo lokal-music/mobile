@@ -1,9 +1,21 @@
 import 'package:isar_community/isar.dart';
 import 'package:path/path.dart' as p;
+import 'package:unorm_dart/unorm_dart.dart' as unorm;
 
 import '../data/entities/ios_transfer_receipt_entity.dart';
 import '../data/entities/song_entity.dart';
 import 'ios_library_scan_epoch.dart';
+
+bool _matchesReceiptRelativePath(String filePath, String relativePath) {
+  if (!p.posix.isAbsolute(filePath) || filePath.contains('\u0000')) {
+    return false;
+  }
+  final normalizedFile = unorm.nfc(p.posix.normalize(filePath)).toLowerCase();
+  final normalizedRelative = unorm
+      .nfc(p.posix.normalize(relativePath))
+      .toLowerCase();
+  return normalizedFile.endsWith('/$normalizedRelative');
+}
 
 /// Match the native ASCII operation suffix rather than the display title.
 /// This also handles APFS case/Unicode spelling and /var parent aliases without
@@ -52,7 +64,10 @@ class IosTransferScanGuard {
       // It gets a different ID via the receipt-aware allocator; the historical
       // import anchor and its completed transfer are never recreated.
       if (!IosLibraryScanEpoch.current ||
-          !incoming.filePath.endsWith('/${receipt.relativePath}') ||
+          !_matchesReceiptRelativePath(
+            incoming.filePath,
+            receipt.relativePath,
+          ) ||
           incoming.id == receipt.localSongId) {
         return false;
       }

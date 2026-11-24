@@ -728,6 +728,7 @@ final songCountProvider = Provider.autoDispose<int>((ref) {
 final songsByAlbumProvider = FutureProvider.autoDispose<List<AlbumGroup>>((
   ref,
 ) async {
+  ref.watch(libraryChangeRevisionProvider);
   final repository = ref.watch(songRepositoryProvider);
   return repository.getAlbumGroups();
 });
@@ -735,6 +736,7 @@ final songsByAlbumProvider = FutureProvider.autoDispose<List<AlbumGroup>>((
 /// Songs grouped by artist.
 final songsByArtistProvider =
     FutureProvider.autoDispose<Map<String, List<Song>>>((ref) async {
+      ref.watch(libraryChangeRevisionProvider);
       final repository = ref.watch(songRepositoryProvider);
       return repository.getSongsByArtist();
     });

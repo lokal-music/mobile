@@ -7,7 +7,7 @@ import 'package:flick/core/utils/dev_log.dart';
 /// Caches file fingerprints (path -> lastModifiedMs) per folder,
 /// so re-scans can diff against disk without loading the full song DB.
 class FileFingerprintCache {
-  final Map<String, Map<String, int>> _cache = {};
+  static final Map<String, Map<String, int>> _cache = {};
 
   String _keyForFolder(String folderUri) {
     return md5.convert(utf8.encode(folderUri)).toString();
@@ -78,6 +78,19 @@ class FileFingerprintCache {
       if (file.existsSync()) await file.delete();
     } catch (e) {
       devLog('[FingerprintCache] Remove error: $e');
+    }
+  }
+
+  /// Clear all cached folder fingerprints from memory and disk (e.g. after clearing library).
+  Future<void> clearAll() async {
+    _cache.clear();
+    try {
+      final dir = Directory(await _cacheDir());
+      if (dir.existsSync()) {
+        await dir.delete(recursive: true);
+      }
+    } catch (e) {
+      devLog('[FingerprintCache] Clear all error: $e');
     }
   }
 }

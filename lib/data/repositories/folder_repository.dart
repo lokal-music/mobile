@@ -51,6 +51,20 @@ class FolderRepository {
     });
   }
 
+  /// Reset cached scan stats on all watched folders (e.g. after clearing library).
+  Future<void> resetAllFolderScanStats() async {
+    await _isar.writeTxn(() async {
+      final folders = await _isar.folderEntitys.where().findAll();
+      if (folders.isEmpty) return;
+      for (final folder in folders) {
+        folder
+          ..songCount = 0
+          ..lastScanned = null;
+      }
+      await _isar.folderEntitys.putAll(folders);
+    });
+  }
+
   /// Update the mount state of a folder's volume (e.g. USB unplug/replug).
   Future<void> updateFolderVolumeState(String uri, String state) async {
     await _isar.writeTxn(() async {

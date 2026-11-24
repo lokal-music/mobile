@@ -90,8 +90,13 @@ class _LibrarySettingsScreenState extends ConsumerState<LibrarySettingsScreen>
         ..uri = folder.uri
         ..displayName = folder.displayName
         ..dateAdded = folder.dateAdded
+        ..lastScanned = existing?.lastScanned
         ..songCount = existing?.songCount ?? 0
-        ..useDeepScan = existing?.useDeepScan;
+        ..useDeepScan = existing?.useDeepScan
+        ..isRemovable = existing?.isRemovable ?? folder.isRemovable
+        ..mediaStoreVolume =
+            existing?.mediaStoreVolume ?? folder.mediaStoreVolume
+        ..volumeState = existing?.volumeState ?? folder.volumeState;
       await repository.upsertFolder(entity);
     }
   }

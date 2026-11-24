@@ -257,6 +257,21 @@ class LibraryScannerService {
     return hasReadableFsPath ? 'mediaStore' : 'saf';
   }
 
+  /// Whether a Rust walk on Android produced no readable songs for a SAF-backed
+  /// tree URI and should fall back to SAF (e.g. Scoped Storage allows `canRead`
+  /// on the directory itself while hiding or blocking its audio files).
+  @visibleForTesting
+  static bool shouldFallbackRustScanToSaf({
+    required bool isAndroid,
+    required String folderUri,
+    required int totalFiles,
+    required int processedSongs,
+    required int existingRawSongs,
+  }) {
+    if (!isAndroid || !folderUri.startsWith('content://')) return false;
+    return totalFiles == 0 || (processedSongs == 0 && existingRawSongs == 0);
+  }
+
   static const _safDocumentsPrefix =
       'content://com.android.externalstorage.documents';
 
@@ -503,6 +518,7 @@ class LibraryScannerService {
                 displayName,
                 scanPreferences,
                 volumeName: storageInfo.mediaStoreVolume,
+                mode: mode,
               );
               _logScanTiming(
                 displayName,
@@ -632,7 +648,7 @@ class LibraryScannerService {
       _logScanTiming(displayName, 'MediaStore audio query', stopwatch.elapsed);
     } catch (e) {
       devLog("MediaStore audio query failed for $displayName: $e");
-      return;
+      rethrow;
     }
 
     if (_isCancelled) return;
@@ -2129,6 +2145,30 @@ class LibraryScannerService {
     // detached preload, so a cancelled scan can't keep mutating state.
     if (_isCancelled) return;
 
+    // On Android Scoped Storage (without All Files Access), File.canRead() on a
+    // directory can succeed while the raw walk sees 0 files or cannot open them.
+    // Fall back to SAF before deleting anything or reporting an empty scan.
+    if (shouldFallbackRustScanToSaf(
+      isAndroid: Platform.isAndroid,
+      folderUri: folderUri,
+      totalFiles: totalFiles,
+      processedSongs: processed,
+      existingRawSongs: existingMap.length,
+    )) {
+      devLog(
+        'Rust scan found no readable files for $displayName at $scanRootPath '
+        '(totalFiles=$totalFiles, processed=$processed); falling back to SAF',
+      );
+      yield* _scanFolderAndroid(
+        folderUri,
+        displayName,
+        scanPreferences,
+        deferMetadata: false,
+        mode: mode,
+      );
+      return;
+    }
+
     // Apply deletions only now that the walk completed successfully.
     if (!_isCancelled && deletedPaths.isNotEmpty) {
       final idsToDelete = deletedPaths
@@ -2516,7 +2556,24 @@ class LibraryScannerService {
   }) async* {
     _isCancelled = false;
     final totalStopwatch = Stopwatch()..start();
-    final folders = await _folderRepository.getAllFolders();
+    var folders = await _folderRepository.getAllFolders();
+    if (folders.isEmpty) {
+      final saved = await _musicFolderService.getSavedFolders();
+      for (final folder in saved) {
+        final entity = FolderEntity()
+          ..uri = folder.uri
+          ..displayName = folder.displayName
+          ..dateAdded = folder.dateAdded
+          ..songCount = 0
+          ..isRemovable = folder.isRemovable
+          ..mediaStoreVolume = folder.mediaStoreVolume
+          ..volumeState = folder.volumeState;
+        await _folderRepository.upsertFolder(entity);
+      }
+      if (saved.isNotEmpty) {
+        folders = await _folderRepository.getAllFolders();
+      }
+    }
     final scanPlan = _deduplicateFoldersForScan(folders);
     if (scanPlan.isEmpty) return;
 

@@ -28,9 +28,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:flick/core/theme/lokal_theme.dart';
 import 'package:flick/core/theme/lokal_tokens.dart';
+import 'package:flick/data/repositories/folder_repository.dart';
 import 'package:flick/data/repositories/song_repository.dart';
+import 'package:flick/providers/library_scanner_provider.dart';
+import 'package:flick/providers/songs_provider.dart';
 import 'package:flick/services/alac_converter_service.dart';
 import 'package:flick/services/album_art_service.dart';
+import 'package:flick/services/fingerprint_cache_service.dart';
 import 'package:flick/services/playback_cache_preferences_service.dart';
 import 'package:flick/widgets/lokal/settings/lokal_settings_kit.dart';
 import 'package:flick/widgets/common/ios_transfer_root.dart';
@@ -307,10 +311,16 @@ List<LokalSettingsSection> dataSettings(
             );
             if (!ok || !context.mounted) return;
             try {
-              await IosTransferRoot.withLibraryClearBarrier(
-                context,
-                () => SongRepository().deleteAllSongs(),
-              );
+              LibraryScanFlow.cancelActiveScan();
+              await IosTransferRoot.withLibraryClearBarrier(context, () async {
+                await SongRepository().deleteAllSongs();
+                await FolderRepository().resetAllFolderScanStats();
+                await FileFingerprintCache().clearAll();
+              });
+              ref.invalidate(songsProvider);
+              ref.invalidate(songsByAlbumProvider);
+              ref.invalidate(songsByArtistProvider);
+              ref.invalidate(musicFoldersProvider);
               if (context.mounted) _say(context, 'Library cleared.');
             } catch (error) {
               if (context.mounted) {
