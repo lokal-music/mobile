@@ -106,11 +106,17 @@ abstract final class LibraryScanFlow {
   static final MusicFolderService _folders = MusicFolderService();
 
   /// Cancels any active scan session or detached post-scan enrichment task.
+  ///
+  /// Drops the cached scanner instance after cancelling it so a subsequent
+  /// rescan starts with a clean `_currentlyScanning` set even if the cancelled
+  /// scan is still unwinding an async native call.
   static void cancelActiveScan() {
     if (ScanSessionController.instance.isActive) {
       ScanSessionController.instance.stop();
     }
-    _scannerInstance?.cancelScan();
+    final previous = _scannerInstance;
+    _scannerInstance = null;
+    previous?.cancelScan();
   }
 
   /// Opens the system folder picker, saves the folder and scans it.
@@ -146,14 +152,16 @@ abstract final class LibraryScanFlow {
   }
 
   /// Scans one saved folder.
-  static Future<void> scanFolder(BuildContext context, MusicFolder folder) =>
-      _run(
-        context,
-        title: folder.displayName,
-        kind: ScanSessionKind.scan,
-        onCancel: _scanner.cancelScan,
-        run: () => _scanner.scanFolder(folder.uri, folder.displayName),
-      );
+  static Future<void> scanFolder(BuildContext context, MusicFolder folder) {
+    final scanner = _scanner;
+    return _run(
+      context,
+      title: folder.displayName,
+      kind: ScanSessionKind.scan,
+      onCancel: scanner.cancelScan,
+      run: () => scanner.scanFolder(folder.uri, folder.displayName),
+    );
+  }
 
   /// Rescans every folder: [ScanMode.quick] rereads changed files only,
   /// [ScanMode.full] rereads all of them, and [deep] also reads every folder
@@ -162,13 +170,16 @@ abstract final class LibraryScanFlow {
     BuildContext context, {
     ScanMode mode = ScanMode.quick,
     bool deep = false,
-  }) => _run(
-    context,
-    title: 'All folders',
-    kind: ScanSessionKind.scan,
-    onCancel: _scanner.cancelScan,
-    run: () => _scanner.scanAllFolders(mode: mode, forceDeepScan: deep),
-  );
+  }) {
+    final scanner = _scanner;
+    return _run(
+      context,
+      title: 'All folders',
+      kind: ScanSessionKind.scan,
+      onCancel: scanner.cancelScan,
+      run: () => scanner.scanAllFolders(mode: mode, forceDeepScan: deep),
+    );
+  }
 
   /// Decodes every song once so waveforms and loudness are ready.
   static Future<void> preloadAudio(BuildContext context) async {
@@ -226,16 +237,17 @@ abstract final class LibraryScanFlow {
   /// by the floating pill alone.
   static Future<void> _scanDetached(MusicFolder folder) async {
     final controller = ScanSessionController.instance;
+    final scanner = _scanner;
     final generation = controller.begin(
       title: folder.displayName,
       kind: ScanSessionKind.scan,
-      onCancel: _scanner.cancelScan,
+      onCancel: scanner.cancelScan,
     );
     controller.overlayDismissed(generation);
     await driveScanSession(
       controller: controller,
       generation: generation,
-      stream: _scanner.scanFolder(folder.uri, folder.displayName),
+      stream: scanner.scanFolder(folder.uri, folder.displayName),
       title: folder.displayName,
       kind: ScanSessionKind.scan,
       countSongs: SongRepository().getSongCount,

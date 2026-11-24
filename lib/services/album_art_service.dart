@@ -298,7 +298,12 @@ class AlbumArtService {
     return total;
   }
 
+  void clearMemoryCache() {
+    _resolvedPaths.clear();
+  }
+
   Future<void> clearCache() async {
+    _resolvedPaths.clear();
     final dir = await _ensureArtworkDir();
     try {
       await for (final entity in dir.list(followLinks: false)) {

@@ -35,6 +35,7 @@ import 'package:flick/providers/songs_provider.dart';
 import 'package:flick/services/alac_converter_service.dart';
 import 'package:flick/services/album_art_service.dart';
 import 'package:flick/services/fingerprint_cache_service.dart';
+import 'package:flick/services/library_clear_epoch.dart';
 import 'package:flick/services/playback_cache_preferences_service.dart';
 import 'package:flick/widgets/lokal/settings/lokal_settings_kit.dart';
 import 'package:flick/widgets/common/ios_transfer_root.dart';
@@ -311,11 +312,16 @@ List<LokalSettingsSection> dataSettings(
             );
             if (!ok || !context.mounted) return;
             try {
+              LibraryClearEpoch.bump();
               LibraryScanFlow.cancelActiveScan();
               await IosTransferRoot.withLibraryClearBarrier(context, () async {
-                await SongRepository().deleteAllSongs();
+                final songRepo = SongRepository();
+                await songRepo.deleteAllSongs();
+                await songRepo.clearAllAudioCache();
                 await FolderRepository().resetAllFolderScanStats();
                 await FileFingerprintCache().clearAll();
+                AlbumArtService.instance.clearMemoryCache();
+                LibraryClearEpoch.bump();
               });
               ref.invalidate(songsProvider);
               ref.invalidate(songsByAlbumProvider);

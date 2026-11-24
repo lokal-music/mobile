@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'artwork_gate.dart';
 import 'background_metadata_budget.dart';
+import 'library_clear_epoch.dart';
 import 'music_folder_service.dart';
 import '../data/repositories/song_repository.dart';
 import '../data/entities/song_entity.dart';
@@ -48,6 +49,8 @@ class BackgroundMetadataService {
   Future<int> extractPendingMetadata() async {
     if (_isRunning || _stopped) return 0;
     _isRunning = true;
+    final clearEpoch = LibraryClearEpoch.current;
+    bool aborted() => _stopped || !LibraryClearEpoch.isCurrent(clearEpoch);
 
     try {
       final totalStopwatch = Stopwatch()..start();
@@ -58,16 +61,16 @@ class BackgroundMetadataService {
         dbStopwatch.elapsed,
       );
 
-      if (incomplete.isEmpty) return 0;
+      if (incomplete.isEmpty || aborted()) return 0;
 
       const batchSize = 8;
       var totalUpdated = 0;
 
-      for (var i = 0; i < incomplete.length && !_stopped; i += batchSize) {
-        while (artworkExtractionPaused && !_stopped) {
+      for (var i = 0; i < incomplete.length && !aborted(); i += batchSize) {
+        while (artworkExtractionPaused && !aborted()) {
           await _rest(const Duration(milliseconds: 150));
         }
-        if (_stopped) break;
+        if (aborted()) break;
         final batch = incomplete.sublist(
           i,
           (i + batchSize > incomplete.length)
@@ -85,6 +88,7 @@ class BackgroundMetadataService {
           for (final song in batch) {
             song.metadataComplete = true;
           }
+          if (aborted()) break;
           await _songRepository.upsertSongs(batch);
           totalUpdated += batch.length;
           await _rest(backgroundMetadataDelay(Duration.zero));
@@ -95,10 +99,10 @@ class BackgroundMetadataService {
           final chunkStopwatch = Stopwatch()..start();
           final metadataList = <AudioFileInfo>[];
           for (final uri in contentUris) {
-            while (artworkExtractionPaused && !_stopped) {
+            while (artworkExtractionPaused && !aborted()) {
               await _rest(const Duration(milliseconds: 150));
             }
-            if (_stopped) break;
+            if (aborted()) break;
             final probeTime = Stopwatch()..start();
             // The native bulk API creates up to 2 * CPU cores of workers.
             // A single URI takes its serial path; automatic backfill must
@@ -106,8 +110,8 @@ class BackgroundMetadataService {
             metadataList.addAll(await _musicFolderService.fetchMetadata([uri]));
             await _rest(backgroundMetadataDelay(probeTime.elapsed));
           }
-          // A stopped partial batch must not mark unvisited rows complete.
-          if (_stopped) break;
+          // A stopped or cleared partial batch must not write stale rows back.
+          if (aborted()) break;
           final metaByUri = <String, AudioFileInfo>{};
           for (final m in metadataList) {
             metaByUri[m.uri] = m;
@@ -132,6 +136,7 @@ class BackgroundMetadataService {
             updateBatch.add(song);
           }
 
+          if (aborted()) break;
           await _songRepository.upsertSongs(updateBatch);
           totalUpdated += updateBatch.length;
           _logTiming(

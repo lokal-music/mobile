@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'ios_library_scan_epoch.dart';
 import 'ios_transfer_scan_guard.dart';
+import 'library_clear_epoch.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -170,10 +171,16 @@ class LibraryScannerService {
   final PlaylistService _playlistService;
   final FileFingerprintCache _fingerprintCache = FileFingerprintCache();
 
-  bool _isCancelled = false;
+  int _scanEpoch = 0;
   final Set<String> _currentlyScanning = {};
   final Map<String, Future<void>> _folderFinalization = {};
   final ArtworkBackfillTracker _artworkBackfill = ArtworkBackfillTracker();
+
+  ({int scan, int clear}) _beginScanRun() =>
+      (scan: ++_scanEpoch, clear: LibraryClearEpoch.current);
+
+  bool _isStale(({int scan, int clear}) token) =>
+      token.scan != _scanEpoch || !LibraryClearEpoch.isCurrent(token.clear);
 
   /// Aggregate progress of post-scan artwork backfill; null when idle.
   ValueListenable<ArtworkBackfillProgress?> get artworkBackfillProgress =>
@@ -216,7 +223,7 @@ class LibraryScannerService {
        _playlistService = playlistService ?? PlaylistService();
 
   void cancelScan() {
-    _isCancelled = true;
+    _scanEpoch++;
     // A detached preload pass outlives the scan stream; stop it too or it
     // keeps decoding (and holding the artwork gate) against the next scan.
     AudioPreloadService.instance.cancel();
@@ -246,8 +253,15 @@ class LibraryScannerService {
     required bool hasReadableFsPath,
     required bool useDeepScan,
     required bool isRemovable,
+    bool hasMediaAudioPermission = true,
+    bool isSafUri = false,
   }) {
     if (allFilesAccess && hasReadableFsPath) return 'rust';
+    // Under Android Scoped Storage, without All Files Access or broad audio
+    // read permission (READ_MEDIA_AUDIO / READ_EXTERNAL_STORAGE), MediaStore
+    // and raw filesystem walks only see app-owned files and silently miss the
+    // rest of a SAF-granted folder. Route straight to SAF.
+    if (isSafUri && !hasMediaAudioPermission) return 'saf';
     if (useDeepScan) {
       if (isRemovable) {
         return hasReadableFsPath ? 'mediaStore' : 'saf';
@@ -333,15 +347,19 @@ class LibraryScannerService {
     String displayName, {
     ScanMode mode = ScanMode.quick,
   }) async* {
-    // Cancellation is sticky for the whole operation; only entry points may
-    // clear it, so a Stop can't be wiped by a folder scan that starts late.
-    _isCancelled = false;
-    yield* _scanFolderInternal(folderUri, displayName, mode: mode);
+    final token = _beginScanRun();
+    yield* _scanFolderInternal(
+      folderUri,
+      displayName,
+      token: token,
+      mode: mode,
+    );
   }
 
   Stream<ScanProgress> _scanFolderInternal(
     String folderUri,
     String displayName, {
+    required ({int scan, int clear}) token,
     ScanMode mode = ScanMode.quick,
     bool forceDeepScan = false,
   }) async* {
@@ -349,6 +367,7 @@ class LibraryScannerService {
     final scanKey = normalizeFolderIdentifier(folderUri);
     final scanPreferences = await _scanPreferencesService.getPreferences();
 
+    if (_isStale(token)) return;
     if (_currentlyScanning.contains(scanKey)) {
       devLog('Folder $displayName is already being scanned, skipping...');
       return;
@@ -357,13 +376,22 @@ class LibraryScannerService {
     _currentlyScanning.add(scanKey);
     final artworkBackfillToken = _artworkBackfill.begin(scanKey);
     try {
+      final folderEntity = await _folderRepository.getFolderByUri(folderUri);
+      // A folder with no recorded scan history (e.g. right after Clear library)
+      // must always perform a full scan rather than relying on quick shortcuts.
+      final effectiveMode =
+          folderEntity == null ||
+              folderEntity.lastScanned == null ||
+              folderEntity.songCount == 0
+          ? ScanMode.full
+          : mode;
+
       if (Platform.isAndroid) {
         final storageInfo = await _musicFolderService.resolveStorageInfo(
           folderUri,
         );
+        if (_isStale(token)) return;
         final resolvedScanRoot = storageInfo.fsPath;
-
-        final folderEntity = await _folderRepository.getFolderByUri(folderUri);
         final useDeepScan =
             forceDeepScan ||
             (folderEntity?.useDeepScan ?? scanPreferences.useDeepScan);
@@ -400,9 +428,6 @@ class LibraryScannerService {
           return;
         }
 
-        // All Files Access: raw filesystem walk covers every volume and every
-        // format the OEM's MediaScanner may have skipped (DSD/DSF/WV). This is
-        // the UAPP/Neutron parity path and collapses the deep/normal split.
         final hasReadableFsPath =
             resolvedScanRoot != null && resolvedScanRoot.isNotEmpty;
         final scanEngineChoice = chooseAndroidScanEngine(
@@ -410,150 +435,79 @@ class LibraryScannerService {
           hasReadableFsPath: hasReadableFsPath,
           useDeepScan: useDeepScan,
           isRemovable: storageInfo.isRemovable,
+          hasMediaAudioPermission: storageInfo.hasMediaAudioPermission,
+          isSafUri: folderUri.startsWith('content://'),
         );
-        // The null re-check is required for Dart promotion even though the
-        // all-files 'rust' choice implies hasReadableFsPath.
-        if (scanEngineChoice == 'rust' &&
-            storageInfo.allFilesAccess &&
-            resolvedScanRoot != null) {
+
+        if (scanEngineChoice == 'rust' && resolvedScanRoot != null) {
           try {
             yield* _scanFolderRust(
               resolvedScanRoot,
               folderUri,
               displayName,
               scanPreferences,
-              mode: mode,
+              token: token,
+              mode: effectiveMode,
             );
             _logScanTiming(
               displayName,
-              'scan folder (Rust, all-files access)',
+              storageInfo.allFilesAccess
+                  ? 'scan folder (Rust, all-files access)'
+                  : 'scan folder (Rust deep scan)',
               scanStopwatch.elapsed,
             );
             return;
           } catch (e) {
             devLog(
-              'All-files scan failed for $displayName at $resolvedScanRoot: '
-              '$e, falling back to MediaStore/SAF',
+              'Rust scan failed for $displayName at $resolvedScanRoot: '
+              '$e, falling back to SAF',
             );
           }
-        }
-
-        if (useDeepScan) {
-          // Rust can't open scoped removable paths. MediaStore indexes the
-          // volume and works; SAF DocumentsContract tree walk often returns 0
-          // files on SD/USB, so prefer MediaStore there before SAF fallback.
-          if (storageInfo.isRemovable) {
-            if (resolvedScanRoot != null && resolvedScanRoot.isNotEmpty) {
-              try {
-                yield* _scanFolderMediaStore(
-                  resolvedScanRoot,
-                  folderUri,
-                  displayName,
-                  scanPreferences,
-                  volumeName: storageInfo.mediaStoreVolume,
-                  mode: mode,
-                );
-                _logScanTiming(
-                  displayName,
-                  'scan folder (MediaStore, removable deep)',
-                  scanStopwatch.elapsed,
-                );
-                return;
-              } catch (e) {
-                devLog(
-                  'MediaStore scan failed for removable $displayName at '
-                  '$resolvedScanRoot: $e, falling back to SAF',
-                );
-              }
-            } else {
-              devLog(
-                'Deep scan on removable $displayName: no fs path, using SAF',
-              );
-            }
-          } else if (resolvedScanRoot != null && resolvedScanRoot.isNotEmpty) {
-            try {
-              yield* _scanFolderRust(
-                resolvedScanRoot,
-                folderUri,
-                displayName,
-                scanPreferences,
-                mode: mode,
-              );
-              _logScanTiming(
-                displayName,
-                'scan folder (Rust deep scan)',
-                scanStopwatch.elapsed,
-              );
-              return;
-            } catch (e) {
-              devLog(
-                'Rust deep scan failed for $displayName at $resolvedScanRoot: $e, '
-                'falling back to SAF',
-              );
-            }
-          } else {
+        } else if (scanEngineChoice == 'mediaStore' &&
+            resolvedScanRoot != null) {
+          try {
+            yield* _scanFolderMediaStore(
+              resolvedScanRoot,
+              folderUri,
+              displayName,
+              scanPreferences,
+              token: token,
+              volumeName: storageInfo.mediaStoreVolume,
+              mode: effectiveMode,
+            );
+            _logScanTiming(
+              displayName,
+              useDeepScan && storageInfo.isRemovable
+                  ? 'scan folder (MediaStore, removable deep)'
+                  : 'scan folder (MediaStore)',
+              scanStopwatch.elapsed,
+            );
+            return;
+          } catch (e) {
             devLog(
-              'Deep scan requested for $displayName but no filesystem path '
-              'resolvable, falling back to SAF',
+              'MediaStore scan failed for $displayName at $resolvedScanRoot: '
+              '$e, falling back to SAF',
             );
           }
-
-          yield* _scanFolderAndroid(
-            folderUri,
-            displayName,
-            scanPreferences,
-            mode: mode,
-          );
-          _logScanTiming(
-            displayName,
-            'scan folder (SAF)',
-            scanStopwatch.elapsed,
-          );
-        } else {
-          if (resolvedScanRoot != null && resolvedScanRoot.isNotEmpty) {
-            try {
-              yield* _scanFolderMediaStore(
-                resolvedScanRoot,
-                folderUri,
-                displayName,
-                scanPreferences,
-                volumeName: storageInfo.mediaStoreVolume,
-                mode: mode,
-              );
-              _logScanTiming(
-                displayName,
-                'scan folder (MediaStore)',
-                scanStopwatch.elapsed,
-              );
-              return;
-            } catch (e) {
-              devLog(
-                'MediaStore scan failed for $displayName at $resolvedScanRoot: $e, '
-                'falling back to SAF',
-              );
-            }
-          }
-
-          yield* _scanFolderAndroid(
-            folderUri,
-            displayName,
-            scanPreferences,
-            deferMetadata: true,
-            mode: mode,
-          );
-          _logScanTiming(
-            displayName,
-            'scan folder (SAF)',
-            scanStopwatch.elapsed,
-          );
         }
+
+        yield* _scanFolderAndroid(
+          folderUri,
+          displayName,
+          scanPreferences,
+          token: token,
+          deferMetadata: !useDeepScan,
+          mode: effectiveMode,
+        );
+        _logScanTiming(displayName, 'scan folder (SAF)', scanStopwatch.elapsed);
       } else {
         yield* _scanFolderRust(
           folderUri,
           folderUri,
           displayName,
           scanPreferences,
-          mode: mode,
+          token: token,
+          mode: effectiveMode,
         );
         _logScanTiming(
           displayName,
@@ -563,8 +517,8 @@ class LibraryScannerService {
       }
     } finally {
       _currentlyScanning.remove(scanKey);
-      if (_isCancelled) {
-        // Cancelled: no backfill will run, so release anyone awaiting covers.
+      if (_isStale(token)) {
+        // Cancelled or cleared: no backfill will run, so release anyone awaiting covers.
         _artworkBackfill.finish(scanKey, artworkBackfillToken);
       } else {
         // Detached artwork backfill: resolve covers the lazy tile path hasn't
@@ -576,6 +530,7 @@ class LibraryScannerService {
           displayName,
           'artwork resolve',
           () async {
+            if (_isStale(token)) return;
             // CUE/log finalization upserts entities it loaded before artwork
             // existed; wait for it so it cannot clobber freshly resolved art
             // and so CUE-created tracks get resolved too.
@@ -583,9 +538,11 @@ class LibraryScannerService {
             if (pending != null) {
               await pending;
             }
+            if (_isStale(token)) return;
             final songs = await _songRepository.getSongEntitiesByFolder(
               folderUri,
             );
+            if (_isStale(token) || songs.isEmpty) return;
             await AlbumArtService.instance.resolveMissingArtwork(
               songs,
               onProgress: (completed, total) => _artworkBackfill.setProgress(
@@ -595,11 +552,13 @@ class LibraryScannerService {
                 total,
               ),
             );
+            if (_isStale(token)) return;
             try {
               if (await AppleMusicSettings().autoEnrichEnabled()) {
                 final models = await _songRepository.getSongsByFolder(
                   folderUri,
                 );
+                if (_isStale(token) || models.isEmpty) return;
                 await AutoMetadataEnricher.instance.enrichMissing(models);
               }
             } catch (error) {
@@ -621,10 +580,11 @@ class LibraryScannerService {
     String folderUri,
     String displayName,
     LibraryScanPreferences scanPreferences, {
+    required ({int scan, int clear}) token,
     String? volumeName,
     ScanMode mode = ScanMode.quick,
   }) async* {
-    if (_isCancelled) return;
+    if (_isStale(token)) return;
     final totalStopwatch = Stopwatch()..start();
     const scanEngine = 'MediaStore';
     var newSongs = 0;
@@ -651,7 +611,7 @@ class LibraryScannerService {
       rethrow;
     }
 
-    if (_isCancelled) return;
+    if (_isStale(token)) return;
 
     // ponytail: MediaStore returns an empty-but-successful list when the
     // folder isn't indexed yet (Android 15 scoped storage; no MediaScan is
@@ -666,6 +626,7 @@ class LibraryScannerService {
         folderUri,
         displayName,
         scanPreferences,
+        token: token,
         deferMetadata: true,
         mode: mode,
       );
@@ -852,6 +813,8 @@ class LibraryScannerService {
     }
     _logScanTiming(displayName, 'diff/build entities', diffStopwatch.elapsed);
 
+    if (_isStale(token)) return;
+
     if (idsToDeleteInline.isNotEmpty) {
       await _songRepository.deleteScannedSongsByIds(idsToDeleteInline);
     }
@@ -906,11 +869,13 @@ class LibraryScannerService {
             urisNeedingSparseMetadata,
             folderUri,
             displayName,
+            token: token,
           ),
         ),
       );
     }
 
+    if (_isStale(token)) return;
     final finalCount = await _songRepository.countSongsInFolder(folderUri);
     await _folderRepository.updateFolderScanInfo(folderUri, finalCount);
 
@@ -924,6 +889,7 @@ class LibraryScannerService {
           displayName: displayName,
           mediaStoreFiles: mediaStoreFiles,
           scanPreferences: scanPreferences,
+          token: token,
           volumeName: volumeName,
         ),
       ),
@@ -935,6 +901,7 @@ class LibraryScannerService {
         () => _syncPlaylistSourcesForFolder(
           folderUri,
           scanPreferences,
+          token: token,
           scanRootPath: folderPath,
         ),
       ),
@@ -943,6 +910,7 @@ class LibraryScannerService {
       folderUri: folderUri,
       displayName: displayName,
       after: Future.wait(detachedTasks),
+      token: token,
     );
 
     _logScanTiming(
@@ -967,11 +935,14 @@ class LibraryScannerService {
   Future<void> _extractSparseMetadataInBackground(
     List<String> contentUris,
     String folderUri,
-    String displayName,
-  ) async {
+    String displayName, {
+    required ({int scan, int clear}) token,
+  }) async {
+    if (_isStale(token)) return;
     final metadataBatchSize = _recommendedMetadataBatchSize(contentUris.length);
     final metadataChunks = _chunkList(contentUris, metadataBatchSize);
     final songsByUri = await _songRepository.getSongEntitiesByFolder(folderUri);
+    if (_isStale(token)) return;
     final pathMap = <String, SongEntity>{};
     // MediaStore content URIs carry no filesystem path the Rust fallback
     // could use; hand it the row's raw path so retries read the file
@@ -990,11 +961,12 @@ class LibraryScannerService {
     }
 
     for (final chunkUris in metadataChunks) {
-      if (_isCancelled) break;
+      if (_isStale(token)) break;
 
       final stopwatch = Stopwatch()..start();
       final metadataList = await _fetchMetadataChunk(
         chunkUris,
+        token: token,
         rawPathByUri: rawPathByUri,
       );
       _logScanTiming(
@@ -1002,7 +974,7 @@ class LibraryScannerService {
         'sparse metadata chunk ${chunkUris.length}',
         stopwatch.elapsed,
       );
-      if (metadataList == null) continue;
+      if (metadataList == null || _isStale(token)) continue;
 
       final updateBatch = <SongEntity>[];
 
@@ -1054,7 +1026,7 @@ class LibraryScannerService {
         updateBatch.add(existing);
       }
 
-      if (updateBatch.isNotEmpty) {
+      if (updateBatch.isNotEmpty && !_isStale(token)) {
         await _songRepository.upsertScannedSongs(updateBatch);
       }
     }
@@ -1066,9 +1038,10 @@ class LibraryScannerService {
     required String displayName,
     required List<AudioFileInfo> mediaStoreFiles,
     required LibraryScanPreferences scanPreferences,
+    required ({int scan, int clear}) token,
     String? volumeName,
   }) async {
-    if (_isCancelled || mediaStoreFiles.isEmpty) return;
+    if (_isStale(token) || mediaStoreFiles.isEmpty) return;
 
     List<Map<String, dynamic>> nonAudioFiles;
     try {
@@ -1086,7 +1059,7 @@ class LibraryScannerService {
       return;
     }
 
-    if (_isCancelled || nonAudioFiles.isEmpty) return;
+    if (_isStale(token) || nonAudioFiles.isEmpty) return;
 
     final scannedByPath = <String, AudioFileInfo>{};
     final scannedByUri = <String, AudioFileInfo>{};
@@ -1116,11 +1089,12 @@ class LibraryScannerService {
         : <String, RipLog>{};
     _logScanTiming(displayName, 'CUE/log parse', sidecarStopwatch.elapsed);
 
-    if (_isCancelled || (cueMap.isEmpty && logMap.isEmpty)) return;
+    if (_isStale(token) || (cueMap.isEmpty && logMap.isEmpty)) return;
 
     final existingSongs = await _songRepository.getSongEntitiesByFolder(
       folderUri,
     );
+    if (_isStale(token)) return;
     final rawExistingMap = <String, SongEntity>{};
     for (final song in existingSongs) {
       if (song.startOffsetMs == null) {
@@ -1139,7 +1113,7 @@ class LibraryScannerService {
           (p) => allScannedPaths.contains(p) && !audioFilesWithCue.contains(p),
         )
         .toList();
-    if (orphanedCuePaths.isNotEmpty) {
+    if (orphanedCuePaths.isNotEmpty && !_isStale(token)) {
       await _songRepository.deleteScannedCueTracksByPath(orphanedCuePaths);
     }
 
@@ -1147,7 +1121,7 @@ class LibraryScannerService {
     final entitiesToUpsert = <SongEntity>[];
 
     for (final entry in cueMap.entries) {
-      if (_isCancelled) break;
+      if (_isStale(token)) break;
 
       final audioPath = entry.key;
       final file = scannedByPath[audioPath] ?? scannedByUri[audioPath];
@@ -1198,6 +1172,7 @@ class LibraryScannerService {
       entitiesToUpsert.add(existing);
     }
 
+    if (_isStale(token)) return;
     if (idsToDelete.isNotEmpty) {
       await _songRepository.deleteScannedSongsByIds(idsToDelete);
     }
@@ -1205,6 +1180,7 @@ class LibraryScannerService {
       await _songRepository.upsertScannedSongs(entitiesToUpsert);
     }
 
+    if (_isStale(token)) return;
     final finalCount = await _songRepository.countSongsInFolder(folderUri);
     await _folderRepository.updateFolderScanInfo(folderUri, finalCount);
   }
@@ -1222,7 +1198,9 @@ class LibraryScannerService {
     required int totalFiles,
     required Stopwatch totalStopwatch,
     required LibraryScanPreferences scanPreferences,
+    required ({int scan, int clear}) token,
   }) async* {
+    if (_isStale(token)) return;
     final newBatch = <SongEntity>[];
     for (final uri in urisToProcess) {
       if (existingMap.containsKey(uri)) continue; // already visible
@@ -1261,6 +1239,7 @@ class LibraryScannerService {
       );
     }
 
+    if (_isStale(token)) return;
     if (newBatch.isNotEmpty) {
       await _songRepository.upsertScannedSongs(newBatch);
     }
@@ -1288,10 +1267,12 @@ class LibraryScannerService {
           folderUri: folderUri,
           displayName: displayName,
           scanPreferences: scanPreferences,
+          token: token,
         ),
       ),
     );
 
+    if (_isStale(token)) return;
     final finalCount = await _songRepository.countSongsInFolder(folderUri);
     await _folderRepository.updateFolderScanInfo(folderUri, finalCount);
 
@@ -1299,7 +1280,11 @@ class LibraryScannerService {
       _runDetachedScanTask(
         displayName,
         'SAF playlist sync',
-        () => _syncPlaylistSourcesForFolder(folderUri, scanPreferences),
+        () => _syncPlaylistSourcesForFolder(
+          folderUri,
+          scanPreferences,
+          token: token,
+        ),
       ),
     );
 
@@ -1324,29 +1309,34 @@ class LibraryScannerService {
     required String folderUri,
     required String displayName,
     required LibraryScanPreferences scanPreferences,
+    required ({int scan, int clear}) token,
   }) async {
-    if (uris.isEmpty) return;
+    if (uris.isEmpty || _isStale(token)) return;
 
     final metadataBatchSize = _recommendedMetadataBatchSize(uris.length);
     final metadataChunks = _chunkList(uris, metadataBatchSize);
 
     final songsByUri = await _songRepository.getSongEntitiesByFolder(folderUri);
+    if (_isStale(token)) return;
     final pathMap = <String, SongEntity>{};
     for (final s in songsByUri) {
       if (s.startOffsetMs == null) pathMap[s.filePath] = s;
     }
 
     for (final chunkUris in metadataChunks) {
-      if (_isCancelled) break;
+      if (_isStale(token)) break;
 
       final stopwatch = Stopwatch()..start();
-      final metadataList = await _fetchMetadataChunk(chunkUris);
+      final metadataList = await _fetchMetadataChunk(
+        chunkUris,
+        token: token,
+      );
       _logScanTiming(
         displayName,
         'deferred metadata chunk ${chunkUris.length}',
         stopwatch.elapsed,
       );
-      if (metadataList == null) continue;
+      if (metadataList == null || _isStale(token)) continue;
 
       final metadataByUri = {for (final m in metadataList) m.uri: m};
       final updateBatch = <SongEntity>[];
@@ -1406,6 +1396,7 @@ class LibraryScannerService {
         updateBatch.add(existing);
       }
 
+      if (_isStale(token)) break;
       if (idsToDelete.isNotEmpty) {
         await _songRepository.deleteScannedSongsByIds(idsToDelete);
       }
@@ -1414,6 +1405,7 @@ class LibraryScannerService {
       }
     }
 
+    if (_isStale(token)) return;
     final finalCount = await _songRepository.countSongsInFolder(folderUri);
     await _folderRepository.updateFolderScanInfo(folderUri, finalCount);
   }
@@ -1422,10 +1414,11 @@ class LibraryScannerService {
     String folderUri,
     String displayName,
     LibraryScanPreferences scanPreferences, {
+    required ({int scan, int clear}) token,
     bool deferMetadata = false,
     ScanMode mode = ScanMode.quick,
   }) async* {
-    if (_isCancelled) return;
+    if (_isStale(token)) return;
     final totalStopwatch = Stopwatch()..start();
     const scanEngine = 'SAF';
     var newSongs = 0;
@@ -1456,10 +1449,10 @@ class LibraryScannerService {
       );
     } catch (e) {
       devLog("Error scanning Android folder: $e");
-      return;
+      rethrow;
     }
 
-    if (_isCancelled) return;
+    if (_isStale(token)) return;
 
     // 2. Diff Logic
     final existingSongs = await _songRepository.getSongEntitiesByFolder(
@@ -1655,6 +1648,7 @@ class LibraryScannerService {
         totalFiles: totalFiles,
         totalStopwatch: totalStopwatch,
         scanPreferences: scanPreferences,
+        token: token,
       );
       return;
     }
@@ -1665,16 +1659,19 @@ class LibraryScannerService {
     final metadataChunks = _chunkList(urisToProcess, metadataBatchSize);
 
     for (final chunkUris in metadataChunks) {
-      if (_isCancelled) break;
+      if (_isStale(token)) break;
 
       final chunkStopwatch = Stopwatch()..start();
-      final metadataList = await _fetchMetadataChunk(chunkUris);
+      final metadataList = await _fetchMetadataChunk(
+        chunkUris,
+        token: token,
+      );
       _logScanTiming(
         displayName,
         'SAF metadata chunk ${chunkUris.length}',
         chunkStopwatch.elapsed,
       );
-      if (metadataList == null) {
+      if (metadataList == null || _isStale(token)) {
         continue;
       }
 
@@ -1821,6 +1818,8 @@ class LibraryScannerService {
         batch.add(song);
       }
 
+      if (_isStale(token)) break;
+
       if (idsToDelete.isNotEmpty) {
         await _songRepository.deleteScannedSongsByIds(idsToDelete);
       }
@@ -1847,14 +1846,14 @@ class LibraryScannerService {
       );
     }
 
-    if (_isCancelled) return;
+    if (_isStale(token)) return;
 
     final finalCount = await _songRepository.countSongsInFolder(folderUri);
+    await _folderRepository.updateFolderScanInfo(folderUri, finalCount);
     _logScanTiming(displayName, 'SAF scan total', totalStopwatch.elapsed);
 
-    // Metadata is written; report completion now so the UI can close. Folder
-    // stats and playlist sync are bookkeeping and run detached so they cannot
-    // hold the completion event back.
+    // Metadata is written; report completion now so the UI can close. Playlist
+    // sync is bookkeeping and runs detached so it cannot hold completion back.
     yield ScanProgress(
       songsFound: finalCount,
       totalFiles: totalFiles,
@@ -1872,9 +1871,12 @@ class LibraryScannerService {
       displayName,
       'scan finalization',
       () async {
-        if (_isCancelled) return;
-        await _folderRepository.updateFolderScanInfo(folderUri, finalCount);
-        await _syncPlaylistSourcesForFolder(folderUri, scanPreferences);
+        if (_isStale(token)) return;
+        await _syncPlaylistSourcesForFolder(
+          folderUri,
+          scanPreferences,
+          token: token,
+        );
       },
     );
     _trackFinalization(folderUri, finalization);
@@ -1882,6 +1884,7 @@ class LibraryScannerService {
       folderUri: folderUri,
       displayName: displayName,
       after: finalization,
+      token: token,
     );
 
     yield ScanProgress(
@@ -1902,9 +1905,10 @@ class LibraryScannerService {
     String folderUri,
     String displayName,
     LibraryScanPreferences scanPreferences, {
+    required ({int scan, int clear}) token,
     ScanMode mode = ScanMode.quick,
   }) async* {
-    if (_isCancelled) return;
+    if (_isStale(token)) return;
     final totalStopwatch = Stopwatch()..start();
     const scanEngine = 'Rust deep scan';
     var newSongs = 0;
@@ -1995,7 +1999,7 @@ class LibraryScannerService {
         forceFullRescan: forceFull,
       ),
     )) {
-      if (_isCancelled) {
+      if (_isStale(token)) {
         break;
       }
 
@@ -2112,6 +2116,8 @@ class LibraryScannerService {
           newOrModifiedFingerprints[metadata.path] = metadata.lastModified;
         }
 
+        if (_isStale(token)) break;
+
         if (idsToDelete.isNotEmpty) {
           await _songRepository.deleteScannedSongsByIds(idsToDelete);
         }
@@ -2143,7 +2149,7 @@ class LibraryScannerService {
 
     // Stopped mid-scan: skip deletions, sidecars, playlist/cache sync and the
     // detached preload, so a cancelled scan can't keep mutating state.
-    if (_isCancelled) return;
+    if (_isStale(token)) return;
 
     // On Android Scoped Storage (without All Files Access), File.canRead() on a
     // directory can succeed while the raw walk sees 0 files or cannot open them.
@@ -2163,6 +2169,7 @@ class LibraryScannerService {
         folderUri,
         displayName,
         scanPreferences,
+        token: token,
         deferMetadata: false,
         mode: mode,
       );
@@ -2170,7 +2177,7 @@ class LibraryScannerService {
     }
 
     // Apply deletions only now that the walk completed successfully.
-    if (!_isCancelled && deletedPaths.isNotEmpty) {
+    if (!_isStale(token) && deletedPaths.isNotEmpty) {
       final idsToDelete = deletedPaths
           .map((path) => existingMap[path]?.id)
           .whereType<int>()
@@ -2184,7 +2191,7 @@ class LibraryScannerService {
 
     // SAF-scanned rows the walker re-added with raw paths are superseded;
     // drop the old URI-keyed rows only when the replacement actually exists.
-    if (!_isCancelled && safKeyedSongs.isNotEmpty) {
+    if (!_isStale(token) && safKeyedSongs.isNotEmpty) {
       final rawPathsNow =
           (await _songRepository.getSongEntitiesByFolder(folderUri))
               .where((s) => !s.filePath.startsWith('content://'))
@@ -2197,12 +2204,13 @@ class LibraryScannerService {
           })
           .map((s) => s.id)
           .toList();
-      if (supersededIds.isNotEmpty) {
+      if (supersededIds.isNotEmpty && !_isStale(token)) {
         await _songRepository.deleteScannedSongsByIds(supersededIds);
         deletedSongs += supersededIds.length;
       }
     }
 
+    if (_isStale(token)) return;
     final finalCount = await _songRepository.countSongsInFolder(folderUri);
     await _folderRepository.updateFolderScanInfo(folderUri, finalCount);
 
@@ -2226,21 +2234,26 @@ class LibraryScannerService {
     );
 
     final finalization = _runDetachedScanTask(displayName, 'scan finalization', () async {
-      if (_isCancelled) return;
+      if (_isStale(token)) return;
 
       // Post-process CUE and log files (single walk, both collected in one pass)
-      if (!_isCancelled) {
+      if (!_isStale(token)) {
         final sidecarStopwatch = Stopwatch()..start();
-        final (:cueMap, :logMap) = await _parseCueAndLogFilesRust(scanRootPath);
+        final (:cueMap, :logMap) = await _parseCueAndLogFilesRust(
+          scanRootPath,
+          token: token,
+        );
         _logScanTiming(
           displayName,
           'Rust CUE/log parse',
           sidecarStopwatch.elapsed,
         );
 
+        if (_isStale(token)) return;
         if (cueMap.isNotEmpty || logMap.isNotEmpty || Platform.isIOS) {
           final existingSongsAfterScan = await _songRepository
               .getSongEntitiesByFolder(folderUri);
+          if (_isStale(token)) return;
           // Separate raw entities from CUE tracks — the old collapsible map
           // (keyed only by filePath) lost raw entities when CUE tracks shared
           // the same path, causing raw entities to survive alongside CUE tracks.
@@ -2263,6 +2276,7 @@ class LibraryScannerService {
               .toList();
           final ordinaryOrphans = <String>[];
           for (final audioPath in orphanedCuePaths) {
+            if (_isStale(token)) return;
             if (Platform.isIOS &&
                 iosTransferOperationKeyForPath(audioPath) != null) {
               // A CUE track's duration describes a range, never the full file.
@@ -2271,7 +2285,7 @@ class LibraryScannerService {
                 audioPath,
                 rawPath: audioPath,
               );
-              if (metadata == null || _isCancelled) continue;
+              if (metadata == null || _isStale(token)) continue;
               final expected = existingSongsAfterScan
                   .where((row) => row.filePath == audioPath)
                   .toList();
@@ -2480,10 +2494,12 @@ class LibraryScannerService {
         }
       }
 
+      if (_isStale(token)) return;
       final playlistStopwatch = Stopwatch()..start();
       await _syncPlaylistSourcesForFolder(
         folderUri,
         scanPreferences,
+        token: token,
         scanRootPath: scanRootPath,
       );
       _logScanTiming(
@@ -2492,6 +2508,7 @@ class LibraryScannerService {
         playlistStopwatch.elapsed,
       );
 
+      if (_isStale(token)) return;
       final fingerprintStopwatch = Stopwatch()..start();
       await _fingerprintCache.sync(
         folderUri,
@@ -2517,7 +2534,7 @@ class LibraryScannerService {
         // Re-read the pref at spawn time so a mid-scan toggle is honored
         // instead of using the snapshot captured at scan start.
         final currentPrefs = await _scanPreferencesService.getPreferences();
-        if (_isCancelled) return;
+        if (_isStale(token)) return;
         if (currentPrefs.preloadAudioData && preloadCandidates.isNotEmpty) {
           await _preloadAudioData(preloadCandidates);
         }
@@ -2554,12 +2571,17 @@ class LibraryScannerService {
     ScanMode mode = ScanMode.quick,
     bool forceDeepScan = false,
   }) async* {
-    _isCancelled = false;
+    final token = _beginScanRun();
     final totalStopwatch = Stopwatch()..start();
     var folders = await _folderRepository.getAllFolders();
-    if (folders.isEmpty) {
-      final saved = await _musicFolderService.getSavedFolders();
-      for (final folder in saved) {
+    final existingKeys = folders
+        .map((folder) => normalizeFolderIdentifier(folder.uri))
+        .toSet();
+    final saved = await _musicFolderService.getSavedFolders();
+    var backfilled = false;
+    for (final folder in saved) {
+      final key = normalizeFolderIdentifier(folder.uri);
+      if (existingKeys.add(key)) {
         final entity = FolderEntity()
           ..uri = folder.uri
           ..displayName = folder.displayName
@@ -2569,11 +2591,13 @@ class LibraryScannerService {
           ..mediaStoreVolume = folder.mediaStoreVolume
           ..volumeState = folder.volumeState;
         await _folderRepository.upsertFolder(entity);
-      }
-      if (saved.isNotEmpty) {
-        folders = await _folderRepository.getAllFolders();
+        backfilled = true;
       }
     }
+    if (backfilled) {
+      folders = await _folderRepository.getAllFolders();
+    }
+    if (_isStale(token)) return;
     final scanPlan = _deduplicateFoldersForScan(folders);
     if (scanPlan.isEmpty) return;
 
@@ -2627,12 +2651,13 @@ class LibraryScannerService {
     }
 
     for (final folder in scanPlan) {
-      if (_isCancelled) break;
+      if (_isStale(token)) break;
       started++;
 
       _scanFolderInternal(
         folder.uri,
         folder.displayName,
+        token: token,
         mode: mode,
         forceDeepScan: forceDeepScan,
       ).listen(
@@ -2686,9 +2711,13 @@ class LibraryScannerService {
       );
     }
 
+    if (started == 0 && !controller.isClosed) {
+      await controller.close();
+    }
+
     yield* controller.stream;
 
-    if (!_isCancelled) {
+    if (!_isStale(token)) {
       final finalCount = await _songRepository.getSongCount();
       _logScanTiming('all folders', 'scan all total', totalStopwatch.elapsed);
       yield ScanProgress(
@@ -2738,11 +2767,14 @@ class LibraryScannerService {
     String displayName,
     LibraryScanPreferences scanPreferences,
   ) async {
+    final clearEpoch = LibraryClearEpoch.current;
     final stopwatch = Stopwatch()..start();
     final existingSongs = await _songRepository.getSongEntitiesByFolder(
       folderUri,
     );
-    if (existingSongs.isEmpty) return 0;
+    if (existingSongs.isEmpty || !LibraryClearEpoch.isCurrent(clearEpoch)) {
+      return 0;
+    }
 
     final hasContentUris = existingSongs.any(
       (s) => s.filePath.startsWith('content://'),
@@ -2757,10 +2789,32 @@ class LibraryScannerService {
         scanPreferences,
       );
     } else if (Platform.isAndroid) {
-      final resolvedScanRoot = await _musicFolderService.resolveFilesystemPath(
+      final storageInfo = await _musicFolderService.resolveStorageInfo(
         folderUri,
       );
-      if (resolvedScanRoot != null && resolvedScanRoot.isNotEmpty) {
+      final resolvedScanRoot = storageInfo.fsPath;
+      if (storageInfo.allFilesAccess &&
+          resolvedScanRoot != null &&
+          resolvedScanRoot.isNotEmpty) {
+        deletedPaths = await _checkDeletedPathsRust(
+          resolvedScanRoot,
+          existingSongs,
+          scanPreferences,
+        );
+      } else if (storageInfo.hasMediaAudioPermission) {
+        final filePaths = existingSongs
+            .where((s) => s.filePath.startsWith('/'))
+            .map((s) => s.filePath)
+            .toList();
+        deletedPaths = filePaths.isEmpty
+            ? const []
+            : await _musicFolderService.queryMediaStoreDeletions(
+                filePaths,
+                volumeName: storageInfo.mediaStoreVolume,
+              );
+      } else if (!folderUri.startsWith('content://') &&
+          resolvedScanRoot != null &&
+          resolvedScanRoot.isNotEmpty) {
         deletedPaths = await _checkDeletedPathsRust(
           resolvedScanRoot,
           existingSongs,
@@ -2769,7 +2823,7 @@ class LibraryScannerService {
       } else {
         devLog(
           'Skipping deletion check for $displayName: '
-          'cannot resolve filesystem path',
+          'no direct filesystem or MediaStore read permission',
         );
         return 0;
       }
@@ -2780,6 +2834,8 @@ class LibraryScannerService {
         scanPreferences,
       );
     }
+
+    if (!LibraryClearEpoch.isCurrent(clearEpoch)) return 0;
 
     if (deletedPaths.isNotEmpty) {
       final existingMap = {for (final s in existingSongs) s.filePath: s};
@@ -2977,6 +3033,7 @@ class LibraryScannerService {
 
   Future<List<AudioFileInfo>?> _fetchMetadataChunk(
     List<String> chunkUris, {
+    required ({int scan, int clear}) token,
     Map<String, String>? rawPathByUri,
   }) async {
     try {
@@ -2984,6 +3041,7 @@ class LibraryScannerService {
       return await _fillRustMetadataFallback(
         metadataList,
         chunkUris,
+        token: token,
         rawPathByUri: rawPathByUri,
       );
     } catch (e) {
@@ -3002,6 +3060,7 @@ class LibraryScannerService {
   Future<List<AudioFileInfo>> _fillRustMetadataFallback(
     List<AudioFileInfo> metadataList,
     List<String> chunkUris, {
+    required ({int scan, int clear}) token,
     Map<String, String>? rawPathByUri,
   }) async {
     if (chunkUris.isEmpty || !Platform.isAndroid) return metadataList;
@@ -3010,7 +3069,7 @@ class LibraryScannerService {
     var changed = false;
 
     for (final uri in chunkUris) {
-      if (_isCancelled) break;
+      if (_isStale(token)) break;
 
       final meta = byUri[uri];
       final retrieverSolved =
@@ -3184,13 +3243,15 @@ class LibraryScannerService {
     required String folderUri,
     required String displayName,
     required Future<void> after,
+    required ({int scan, int clear}) token,
   }) {
     unawaited(
       _runDetachedScanTask(displayName, 'scan preload', () async {
         await after;
         final currentPrefs = await _scanPreferencesService.getPreferences();
-        if (_isCancelled || !currentPrefs.preloadAudioData) return;
+        if (_isStale(token) || !currentPrefs.preloadAudioData) return;
         final songs = await _songRepository.getSongEntitiesByFolder(folderUri);
+        if (_isStale(token)) return;
         if (songs.isNotEmpty) await _preloadAudioData(songs);
       }),
     );
@@ -3294,9 +3355,10 @@ class LibraryScannerService {
   Future<void> _syncPlaylistSourcesForFolder(
     String folderUri,
     LibraryScanPreferences scanPreferences, {
+    required ({int scan, int clear}) token,
     String? scanRootPath,
   }) async {
-    if (_isCancelled || !scanPreferences.createPlaylistsFromM3uFiles) {
+    if (_isStale(token) || !scanPreferences.createPlaylistsFromM3uFiles) {
       return;
     }
 
@@ -3438,7 +3500,10 @@ class LibraryScannerService {
   }
 
   Future<({Map<String, CueSheet> cueMap, Map<String, RipLog> logMap})>
-  _parseCueAndLogFilesRust(String scanRootPath) async {
+  _parseCueAndLogFilesRust(
+    String scanRootPath, {
+    required ({int scan, int clear}) token,
+  }) async {
     final cueService = CueFileService();
     final logService = RipLogService();
     final cueMap = <String, CueSheet>{};
@@ -3456,7 +3521,7 @@ class LibraryScannerService {
         recursive: true,
         followLinks: false,
       )) {
-        if (_isCancelled) break;
+        if (_isStale(token)) break;
         if (entity is! File) continue;
         final path = entity.path;
         final ext = path.split('.').last.toLowerCase();
@@ -3473,7 +3538,7 @@ class LibraryScannerService {
 
       // Parse CUE files
       for (final path in cueFiles) {
-        if (_isCancelled) break;
+        if (_isStale(token)) break;
         final content = await File(path).readAsString().catchError((_) => '');
         if (content.isEmpty) continue;
         final sheet = cueService.parseCueSheet(content, cueFilePath: path);
@@ -3487,7 +3552,7 @@ class LibraryScannerService {
 
       // Parse log files
       for (final path in logFiles) {
-        if (_isCancelled) break;
+        if (_isStale(token)) break;
         final content = await File(path).readAsString().catchError((_) => '');
         if (content.isEmpty) continue;
         final ripLog = logService.parseLog(content);

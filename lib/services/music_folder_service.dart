@@ -184,6 +184,7 @@ class StorageVolumeInfo {
   final bool isPrimary;
   final String state;
   final bool allFilesAccess;
+  final bool hasMediaAudioPermission;
 
   const StorageVolumeInfo({
     this.fsPath,
@@ -192,18 +193,22 @@ class StorageVolumeInfo {
     this.isPrimary = false,
     this.state = 'unknown',
     this.allFilesAccess = false,
+    this.hasMediaAudioPermission = false,
   });
 
   bool get isMounted => state == 'mounted';
 
   factory StorageVolumeInfo.fromMap(Map<String, dynamic> map) {
+    final allFiles = map['allFilesAccess'] as bool? ?? false;
     return StorageVolumeInfo(
       fsPath: map['fsPath'] as String?,
       mediaStoreVolume: map['mediaStoreVolume'] as String?,
       isRemovable: map['isRemovable'] as bool? ?? false,
       isPrimary: map['isPrimary'] as bool? ?? false,
       state: map['state'] as String? ?? 'unknown',
-      allFilesAccess: map['allFilesAccess'] as bool? ?? false,
+      allFilesAccess: allFiles,
+      hasMediaAudioPermission:
+          map['hasMediaAudioPermission'] as bool? ?? allFiles,
     );
   }
 }
@@ -301,8 +306,38 @@ class MusicFolderService {
             throw StorageException('Failed to persist folder access');
           }
         }
-        await _ensureFolderInDatabase(folder);
-        return folder;
+        final storageInfo = await resolveStorageInfo(uri);
+        final hasResolvedInfo = storageInfo.state != 'unknown';
+        final refreshed = MusicFolder(
+          uri: uri,
+          displayName: folder.displayName,
+          dateAdded: folder.dateAdded,
+          isRemovable: hasResolvedInfo
+              ? storageInfo.isRemovable
+              : folder.isRemovable,
+          mediaStoreVolume: hasResolvedInfo
+              ? storageInfo.mediaStoreVolume
+              : folder.mediaStoreVolume,
+          volumeState: hasResolvedInfo
+              ? storageInfo.state
+              : folder.volumeState,
+        );
+        final existingEntity =
+            await _foldersRepo().getFolderByUri(folder.uri) ??
+            (folder.uri != uri
+                ? await _foldersRepo().getFolderByUri(uri)
+                : null);
+        if (folder.uri != uri) {
+          await _fingerprintCache.removeFolder(folder.uri);
+          await _removeFolderFromPrefs(folder.uri);
+          await _removeFolderFromDatabase(folder.uri);
+        }
+        await _saveFolderToPrefs(refreshed);
+        await _upsertFolderEntityPreservingSettings(
+          refreshed,
+          existing: existingEntity,
+        );
+        return refreshed;
       }
       if (foldersOverlap(folder.uri, uri)) {
         throw FolderAlreadyExistsException(
@@ -340,11 +375,23 @@ class MusicFolderService {
     return folder;
   }
 
-  Future<void> _ensureFolderInDatabase(MusicFolder folder) async {
-    final existing = await _foldersRepo().getFolderByUri(folder.uri);
-    if (existing == null) {
-      await _saveFolderToDatabase(folder);
-    }
+  Future<void> _upsertFolderEntityPreservingSettings(
+    MusicFolder folder, {
+    FolderEntity? existing,
+  }) async {
+    final repository = _foldersRepo();
+    final entity = FolderEntity()
+      ..uri = folder.uri
+      ..displayName = folder.displayName
+      ..dateAdded = folder.dateAdded
+      ..lastScanned = existing?.lastScanned
+      ..songCount = existing?.songCount ?? 0
+      ..useDeepScan = existing?.useDeepScan
+      ..isRemovable = folder.isRemovable ?? existing?.isRemovable
+      ..mediaStoreVolume =
+          folder.mediaStoreVolume ?? existing?.mediaStoreVolume
+      ..volumeState = folder.volumeState ?? existing?.volumeState;
+    await repository.upsertFolder(entity);
   }
 
   /// Adds a folder the app itself writes to (Lokal's Downloads folder), by
@@ -646,11 +693,13 @@ class MusicFolderService {
     try {
       final allFiles = await hasAllFilesAccess();
       if (!uri.startsWith('content://')) {
+        final mediaAudio = allFiles || await hasMediaAudioPermission();
         return StorageVolumeInfo(
           fsPath: uri,
           isPrimary: true,
           state: 'mounted',
           allFilesAccess: allFiles,
+          hasMediaAudioPermission: mediaAudio,
         );
       }
 
@@ -659,7 +708,10 @@ class MusicFolderService {
         {'uri': uri},
       );
       if (result == null) {
-        return StorageVolumeInfo(allFilesAccess: allFiles);
+        return StorageVolumeInfo(
+          allFilesAccess: allFiles,
+          hasMediaAudioPermission: allFiles || await hasMediaAudioPermission(),
+        );
       }
       return StorageVolumeInfo.fromMap(result.cast<String, dynamic>());
     } catch (e) {
@@ -672,6 +724,17 @@ class MusicFolderService {
   Future<bool> hasAllFilesAccess() async {
     try {
       return await _channel.invokeMethod<bool>('hasAllFilesAccess') ?? false;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /// Whether the app holds broad audio read access (`READ_MEDIA_AUDIO` on
+  /// Android 13+, `READ_EXTERNAL_STORAGE` on Android 12-, or All Files Access).
+  Future<bool> hasMediaAudioPermission() async {
+    try {
+      return await _channel.invokeMethod<bool>('hasMediaAudioPermission') ??
+          false;
     } catch (e) {
       return false;
     }

@@ -9,8 +9,10 @@ import 'package:flick/data/entities/song_entity.dart';
 import 'package:flick/data/repositories/folder_repository.dart';
 import 'package:flick/data/repositories/song_repository.dart';
 import 'package:flick/providers/songs_provider.dart';
+import 'package:flick/services/background_metadata_service.dart';
 import 'package:flick/services/fingerprint_cache_service.dart';
 import 'package:flick/services/ios_library_scan_epoch.dart';
+import 'package:flick/services/library_clear_epoch.dart';
 import 'package:flick/services/library_scanner_service.dart';
 import 'package:flick/services/music_folder_service.dart';
 import 'package:flick/services/permission_service.dart';
@@ -415,4 +417,199 @@ void main() {
       },
     );
   });
+
+  group('Android clear -> rescan follow-up regressions', () {
+    test(
+      'addFolder updates stored URI and preserves useDeepScan when re-picked URI normalizes to same folder',
+      () async {
+        const oldUri =
+            'content://com.android.externalstorage.documents/tree/primary%3Amusic';
+        const newUri =
+            'content://com.android.externalstorage.documents/tree/primary%3AMusic';
+        final existing = MusicFolder(
+          uri: oldUri,
+          displayName: 'Music',
+          dateAdded: DateTime.utc(2026, 1, 1),
+        );
+        SharedPreferences.setMockInitialValues({
+          'music_folders': [jsonEncode(existing.toJson())],
+        });
+
+        final dir = await Directory.systemTemp.createTemp('lokal-repick-');
+        final isar = await _openTestIsar(dir, 'repick');
+        addTearDown(() async {
+          await isar.close();
+          await dir.delete(recursive: true);
+        });
+
+        final folderRepo = FolderRepository(isar: isar);
+        await folderRepo.upsertFolder(
+          FolderEntity()
+            ..uri = oldUri
+            ..displayName = 'Music'
+            ..dateAdded = DateTime.utc(2026, 1, 1)
+            ..useDeepScan = true,
+        );
+
+        final permissions = _FakePermissionService(pickedUri: newUri);
+        final service = MusicFolderService(
+          permissionService: permissions,
+          folderRepository: folderRepo,
+        );
+
+        final refreshed = await service.addFolder();
+        expect(refreshed, isNotNull);
+        expect(refreshed!.uri, newUri);
+        expect(permissions.persistedUris, [newUri]);
+
+        // Old URI key is replaced by the freshly granted URI in both prefs & DB.
+        final saved = await service.getSavedFolders();
+        expect(saved.map((f) => f.uri).toList(), [newUri]);
+        expect(await folderRepo.getFolderByUri(oldUri), isNull);
+        final dbFolder = await folderRepo.getFolderByUri(newUri);
+        expect(dbFolder, isNotNull);
+        expect(dbFolder!.useDeepScan, isTrue);
+      },
+    );
+
+    test(
+      'BackgroundMetadataService aborts without resurrecting deleted rows after LibraryClearEpoch.bump',
+      () async {
+        final dir = await Directory.systemTemp.createTemp('lokal-bgmeta-');
+        final isar = await _openTestIsar(dir, 'bgmeta');
+        addTearDown(() async {
+          await isar.close();
+          await dir.delete(recursive: true);
+        });
+
+        final songRepo = SongRepository(isar: isar, iosImportSafety: false);
+        const contentUri = 'content://media/external/audio/media/42';
+        await songRepo.upsertSong(
+          SongEntity()
+            ..filePath = '/storage/emulated/0/Music/track.flac'
+            ..mediaStoreUri = contentUri
+            ..title = 'Track'
+            ..artist = 'Artist'
+            ..folderUri =
+                'content://com.android.externalstorage.documents/tree/primary%3AMusic'
+            ..dateAdded = DateTime.utc(2026, 1, 1)
+            ..metadataComplete = false,
+        );
+        expect(await songRepo.getSongCount(), 1);
+
+        final fakeFolderService = _ClearingFetchMusicFolderService(
+          onFetch: () async {
+            // Simulate user tapping Clear library while metadata extraction is
+            // awaiting native MediaMetadataRetriever work.
+            LibraryClearEpoch.bump();
+            await songRepo.deleteAllSongs();
+          },
+        );
+        final service = BackgroundMetadataService(
+          musicFolderService: fakeFolderService,
+          songRepository: songRepo,
+          rest: (_) async {},
+        );
+
+        final updated = await service.extractPendingMetadata();
+        expect(updated, 0);
+        expect(
+          await songRepo.getSongCount(),
+          0,
+          reason: 'Pre-clear metadata batch must not re-insert cleared songs',
+        );
+      },
+    );
+
+    test(
+      'scanAllFolders reconciles missing saved folders even when FolderRepository is non-empty',
+      () async {
+        const downloadsUri = '/storage/emulated/0/Music/Lokal Downloads';
+        const mainUri =
+            'content://com.android.externalstorage.documents/tree/primary%3AMusic';
+        SharedPreferences.setMockInitialValues({
+          'music_folders': [
+            jsonEncode(
+              MusicFolder(
+                uri: downloadsUri,
+                displayName: 'Lokal Downloads',
+                dateAdded: DateTime.utc(2026, 1, 1),
+              ).toJson(),
+            ),
+            jsonEncode(
+              MusicFolder(
+                uri: mainUri,
+                displayName: 'Music',
+                dateAdded: DateTime.utc(2026, 1, 1),
+              ).toJson(),
+            ),
+          ],
+        });
+
+        final dir = await Directory.systemTemp.createTemp('lokal-reconcile-');
+        final isar = await _openTestIsar(dir, 'reconcile');
+        addTearDown(() async {
+          await isar.close();
+          await dir.delete(recursive: true);
+        });
+
+        final folderRepo = FolderRepository(isar: isar);
+        final songRepo = SongRepository(isar: isar, iosImportSafety: false);
+        // Only the Downloads folder is in Isar; the user's main folder is only
+        // in SharedPreferences.
+        await folderRepo.upsertFolder(
+          FolderEntity()
+            ..uri = downloadsUri
+            ..displayName = 'Lokal Downloads'
+            ..dateAdded = DateTime.utc(2026, 1, 1),
+        );
+
+        final folderService = MusicFolderService(folderRepository: folderRepo);
+        final scanner = LibraryScannerService(
+          songRepository: songRepo,
+          folderRepository: folderRepo,
+          musicFolderService: folderService,
+        );
+
+        // Cancel immediately via LibraryClearEpoch after reconciliation would
+        // normally start scanning, or let an empty/nonexistent root finish.
+        // We only verify reconciliation by letting scanAllFolders start and
+        // cancelling once the folder repo has been backfilled.
+        final sub = scanner.scanAllFolders().listen((_) {}, onError: (_) {});
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        scanner.cancelScan();
+        await sub.cancel();
+
+        final allDbFolders = await folderRepo.getAllFolders();
+        expect(
+          allDbFolders.map((f) => f.uri).toSet(),
+          containsAll([downloadsUri, mainUri]),
+        );
+      },
+    );
+  });
 }
+
+class _ClearingFetchMusicFolderService extends MusicFolderService {
+  _ClearingFetchMusicFolderService({required this.onFetch});
+
+  final Future<void> Function() onFetch;
+
+  @override
+  Future<List<AudioFileInfo>> fetchMetadata(List<String> uris) async {
+    await onFetch();
+    return [
+      for (final uri in uris)
+        AudioFileInfo(
+          uri: uri,
+          name: 'track.flac',
+          size: 1024,
+          lastModified: 1,
+          extension: 'flac',
+          sampleRate: 44100,
+          bitDepth: 16,
+        ),
+    ];
+  }
+}
+

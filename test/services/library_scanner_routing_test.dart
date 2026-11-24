@@ -129,6 +129,39 @@ void main() {
         'saf',
       );
     });
+
+    test('SAF folder without all-files or media-audio permission routes directly to SAF', () {
+      for (final useDeepScan in [false, true]) {
+        for (final isRemovable in [false, true]) {
+          expect(
+            LibraryScannerService.chooseAndroidScanEngine(
+              allFilesAccess: false,
+              hasReadableFsPath: true,
+              useDeepScan: useDeepScan,
+              isRemovable: isRemovable,
+              hasMediaAudioPermission: false,
+              isSafUri: true,
+            ),
+            'saf',
+            reason: 'useDeepScan=$useDeepScan isRemovable=$isRemovable',
+          );
+        }
+      }
+    });
+
+    test('SAF folder with all-files access still prefers Rust walk', () {
+      expect(
+        LibraryScannerService.chooseAndroidScanEngine(
+          allFilesAccess: true,
+          hasReadableFsPath: true,
+          useDeepScan: false,
+          isRemovable: false,
+          hasMediaAudioPermission: true,
+          isSafUri: true,
+        ),
+        'rust',
+      );
+    });
   });
 
   group('shouldRustRetryMetadata', () {

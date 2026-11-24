@@ -592,6 +592,9 @@ class MainActivity: FlutterActivity() {
                 "hasAllFilesAccess" -> {
                     result.success(hasAllFilesAccess())
                 }
+                "hasMediaAudioPermission" -> {
+                    result.success(hasMediaAudioPermission())
+                }
                 "isAllFilesAccessSupported" -> {
                     result.success(isAllFilesAccessSupported())
                 }
@@ -1873,7 +1876,10 @@ class MainActivity: FlutterActivity() {
     // Single source of truth for filesystem path + MediaStore-volume routing, including
     // removable (USB/SD) volumes which queryMediaStoreAudio must target by their own name.
     private fun resolveStorageInfo(uriString: String): Map<String, Any?> {
-        val allFiles = mapOf("allFilesAccess" to hasAllFilesAccess())
+        val allFiles = mapOf(
+            "allFilesAccess" to hasAllFilesAccess(),
+            "hasMediaAudioPermission" to hasMediaAudioPermission(),
+        )
         val unknown = mapOf<String, Any?>(
             "fsPath" to null,
             "mediaStoreVolume" to null,
@@ -2246,6 +2252,23 @@ class MainActivity: FlutterActivity() {
         }
     }
 
+    // Whether the app can read other apps' audio files through MediaStore.
+    // Without this (or All Files Access), MediaStore queries under Android
+    // Scoped Storage only return files owned by Lokal itself and silently miss
+    // the rest of a SAF-granted folder.
+    private fun hasMediaAudioPermission(): Boolean {
+        if (hasAllFilesAccess()) return true
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            checkSelfPermission(Manifest.permission.READ_MEDIA_AUDIO) ==
+                PackageManager.PERMISSION_GRANTED
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) ==
+                PackageManager.PERMISSION_GRANTED
+        } else {
+            true
+        }
+    }
+
     private fun openAllFilesAccessSettings(): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
             return false
@@ -2378,6 +2401,9 @@ class MainActivity: FlutterActivity() {
                         )
                     }
                 }
+            } catch (e: SecurityException) {
+                Log.w("MainActivity", "listTreeDocuments permission error: ${e.message}", e)
+                if (docId == rootDocId) throw e
             } catch (e: Exception) {
                 Log.w("MainActivity", "listTreeDocuments query failed: ${e.message}", e)
             }
@@ -2641,11 +2667,12 @@ class MainActivity: FlutterActivity() {
             MediaStore.Audio.Media.COMPOSER,
         )
 
-        val selection = if (folderPaths.isNotEmpty()) {
-            folderPaths.joinToString(" OR ") { "${MediaStore.Audio.Media.DATA} LIKE ?" }
+        val normalizedFolderPrefixes = folderPaths.map { "${it.trimEnd('/')}/%" }
+        val selection = if (normalizedFolderPrefixes.isNotEmpty()) {
+            normalizedFolderPrefixes.joinToString(" OR ") { "${MediaStore.Audio.Media.DATA} LIKE ?" }
         } else null
-        val selectionArgs = if (folderPaths.isNotEmpty()) {
-            folderPaths.map { "$it%" }.toTypedArray()
+        val selectionArgs = if (normalizedFolderPrefixes.isNotEmpty()) {
+            normalizedFolderPrefixes.toTypedArray()
         } else null
 
         val seenPaths = HashSet<String>()
@@ -2672,9 +2699,7 @@ class MainActivity: FlutterActivity() {
                     val extension = data.substringAfterLast('.', "").lowercase()
 
                     val id = cursor.getLong(idCol)
-                    val contentUri = ContentUris.withAppendedId(
-                        MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id
-                    ).toString()
+                    val contentUri = ContentUris.withAppendedId(collection, id).toString()
 
                     val duration = cursor.getLong(durationCol)
                     val size = cursor.getLong(sizeCol)
@@ -2700,7 +2725,7 @@ class MainActivity: FlutterActivity() {
                         "size" to size,
                         "lastModified" to (cursor.getLong(dateModCol) * 1000L),
                         "dateAdded" to (cursor.getLong(dateAddedCol) * 1000L),
-                        "bitrate" to (if (duration > 0 && size > 0) ((size * 8) / (duration / 1000)).toString() else null),
+                        "bitrate" to (if (duration > 0 && size > 0) ((size * 8000L) / duration).toString() else null),
                     ))
                 }
             }
@@ -2711,8 +2736,8 @@ class MainActivity: FlutterActivity() {
             // it. Pull these from the Files collection and merge, deduping by
             // filesystem path against the audio rows already collected.
             val dsdExtPatterns = listOf("%.dsf", "%.dff", "%.wv")
-            val dsdSelection = if (folderPaths.isNotEmpty()) {
-                val folderPart = folderPaths.joinToString(" OR ") {
+            val dsdSelection = if (normalizedFolderPrefixes.isNotEmpty()) {
+                val folderPart = normalizedFolderPrefixes.joinToString(" OR ") {
                     "${MediaStore.Files.FileColumns.DATA} LIKE ?"
                 }
                 val extPart = dsdExtPatterns.joinToString(" OR ") {
@@ -2725,8 +2750,7 @@ class MainActivity: FlutterActivity() {
                 }
             }
             val dsdSelectionArgs = (
-                (if (folderPaths.isNotEmpty()) folderPaths.map { "$it%" } else emptyList())
-                    + dsdExtPatterns
+                normalizedFolderPrefixes + dsdExtPatterns
                 ).toTypedArray()
             val dsdCollection =
                 MediaStore.Files.getContentUri(volumeName ?: MediaStore.VOLUME_EXTERNAL)
@@ -2880,7 +2904,7 @@ class MainActivity: FlutterActivity() {
         }
 
         val selectionArgs = (
-            folderPaths.map { "$it%" } +
+            folderPaths.map { "${it.trimEnd('/')}/%" } +
             nonAudioExtensions.map { "%.$it" }
         ).toTypedArray()
 
@@ -2897,7 +2921,7 @@ class MainActivity: FlutterActivity() {
                     val extension = data.substringAfterLast('.', "").lowercase()
                     if (extension !in nonAudioExtensions) continue
 
-                    val isInFolder = folderPaths.any { data.startsWith(it) }
+                    val isInFolder = folderPaths.any { data.startsWith("${it.trimEnd('/')}/") }
                     if (!isInFolder && folderPaths.isNotEmpty()) continue
 
                     result.add(mapOf(
@@ -2919,6 +2943,10 @@ class MainActivity: FlutterActivity() {
 
     private fun queryMediaStoreDeletions(filePaths: List<String>, volumeName: String? = null): List<String> {
         if (filePaths.isEmpty()) return emptyList()
+        // Under Android Scoped Storage without READ_MEDIA_AUDIO/READ_EXTERNAL_STORAGE,
+        // MediaStore hides other apps' files; treating those absences as deletions
+        // would wipe raw-path songs on app launch.
+        if (!hasMediaAudioPermission()) return emptyList()
 
         val existingPaths = mutableSetOf<String>()
         val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {

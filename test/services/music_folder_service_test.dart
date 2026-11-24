@@ -173,6 +173,23 @@ void main() {
       expect(empty.isRemovable, isFalse);
       expect(empty.isPrimary, isFalse);
       expect(empty.state, 'unknown');
+      expect(empty.hasMediaAudioPermission, isFalse);
+
+      final mediaOnly = StorageVolumeInfo.fromMap({
+        'fsPath': '/storage/emulated/0/Music',
+        'state': 'mounted',
+        'allFilesAccess': false,
+        'hasMediaAudioPermission': true,
+      });
+      expect(mediaOnly.allFilesAccess, isFalse);
+      expect(mediaOnly.hasMediaAudioPermission, isTrue);
+
+      final allFilesFallback = StorageVolumeInfo.fromMap({
+        'fsPath': '/storage/emulated/0/Music',
+        'state': 'mounted',
+        'allFilesAccess': true,
+      });
+      expect(allFilesFallback.hasMediaAudioPermission, isTrue);
     });
   });
 }
