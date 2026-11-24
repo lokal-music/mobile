@@ -559,7 +559,11 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
 
   Future<void> switchDesktop(String desktopId) async {
     await _ensureRestored();
-    if (_syncInFlight || _statsSyncInFlight || state.fileCopyProgress.busy) {
+    if (_syncInFlight ||
+        _statsSyncInFlight ||
+        _linkSync?.busy == true ||
+        state.syncProgress.busy ||
+        state.fileCopyProgress.busy) {
       throw StateError('Wait for the current desktop sync or file copy to finish.');
     }
     final credentials = await ref
