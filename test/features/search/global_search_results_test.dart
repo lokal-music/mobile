@@ -58,6 +58,7 @@ const b = Song(
   id: '2',
   title: 'Second',
   artist: 'Gamma',
+  albumArtist: 'Various Artists',
   album: 'Shared title',
   duration: Duration(minutes: 3),
   fileType: 'FLAC',
@@ -112,6 +113,15 @@ void main() {
     );
     expect(
       (await c.read(globalSearchResultsProvider('Second').future)).songs,
+      [b],
+    );
+    // Keep the raw Various Artists tag searchable even though album grouping
+    // resolves that tag to the track artist.
+    expect(
+      (await c.read(globalSearchResultsProvider('various').future))
+          .albums
+          .single
+          .songs,
       [b],
     );
     final provider = globalSearchResultsProvider('Mix');
