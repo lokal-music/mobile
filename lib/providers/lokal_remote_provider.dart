@@ -214,23 +214,39 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
   Future<void> _restore() async {
     final revision = _configurationRevision;
     try {
-      final credentials = await ref
+      final legacy = await ref
           .read(lokalRemoteCredentialsStoreProvider)
           .read();
-      if (_disposed ||
-          revision != _configurationRevision ||
-          credentials == null)
-        return;
-      _credentials = credentials;
+      LokalRemoteCredentials? credentials;
       try {
-        await ref.read(lokalPairedDesktopsStoreProvider).readAll(
-          legacyActive: credentials,
-        );
+        credentials = await ref
+            .read(lokalPairedDesktopsStoreProvider)
+            .resolveActive(legacyActive: legacy);
       } on MissingPluginException {
-        // Headless provider tests and unsupported platform runners still use
-        // the legacy active-pair adapter; production platforms use the vault.
+        credentials = legacy;
       }
       if (_disposed || revision != _configurationRevision) return;
+      if (credentials == null) {
+        if (legacy != null) {
+          await ref
+              .read(lokalRemoteCredentialsStoreProvider)
+              .clearIfMatching(legacy);
+        }
+        if (!_disposed && revision == _configurationRevision) {
+          _credentials = null;
+          state = const LokalRemoteControllerState();
+        }
+        return;
+      }
+      if (legacy == null ||
+          !SecureLokalRemoteCredentialsStore.sameAuthority(
+            legacy,
+            credentials,
+          )) {
+        await ref.read(lokalRemoteCredentialsStoreProvider).write(credentials);
+      }
+      if (_disposed || revision != _configurationRevision) return;
+      _credentials = credentials;
       state = state.copyWith(
         config: LokalRemoteConfig.fromCredentials(credentials),
         status: LokalRemoteConnectionStatus.disconnected,
@@ -500,13 +516,13 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
         );
     if (_disposed || revision != _configurationRevision) return;
     disconnect();
-    await ref.read(lokalRemoteCredentialsStoreProvider).write(credentials);
-    if (_disposed || revision != _configurationRevision) return;
     try {
       await ref.read(lokalPairedDesktopsStoreProvider).add(credentials);
     } on MissingPluginException {
       // Keep legacy pairing operational on test runners without secure storage.
     }
+    if (_disposed || revision != _configurationRevision) return;
+    await ref.read(lokalRemoteCredentialsStoreProvider).write(credentials);
     if (_disposed || revision != _configurationRevision) return;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('lokal.link.${credentials.desktopId}.theme', syncTheme);
