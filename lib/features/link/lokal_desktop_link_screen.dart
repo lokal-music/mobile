@@ -18,7 +18,6 @@ import '../../providers/lokal_remote_provider.dart';
 import '../../providers/ios_transfer_provider.dart';
 import '../../services/link/lokal_link_service.dart';
 import '../../services/lokal_remote_service.dart';
-import '../../services/lokal_paired_desktops_store.dart';
 import '../../widgets/lokal/settings/lokal_settings_kit.dart';
 import '../../widgets/common/ios_transfer_root.dart';
 import '../settings/screens/lokal_remote_settings_screen.dart';
@@ -590,13 +589,6 @@ class _LokalDesktopLinkScreenState
                   ),
                   for (final desktop in _pairedDesktops)
                     Builder(builder: (context) {
-                      final activeId = LokalPairedDesktopsStore.identity(
-                        (desktop.id == LokalPairedDesktopsStore.identity(
-                          desktop.credentials,
-                        ))
-                            ? desktop.credentials
-                            : desktop.credentials,
-                      );
                       final active = link.config?.origin ==
                           desktop.credentials.origin;
                       return ListTile(
