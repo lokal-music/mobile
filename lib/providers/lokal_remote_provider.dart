@@ -245,11 +245,13 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
           )) {
         await ref.read(lokalRemoteCredentialsStoreProvider).write(credentials);
       }
+      final savedName = await _savedDesktopNameFor(credentials);
       if (_disposed || revision != _configurationRevision) return;
       _credentials = credentials;
       state = state.copyWith(
         config: LokalRemoteConfig.fromCredentials(credentials),
         status: LokalRemoteConnectionStatus.disconnected,
+        desktopName: savedName,
         clearError: true,
       );
       if (credentials.desktopId != null && credentials.remoteToken.isNotEmpty) {
@@ -522,13 +524,13 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
     final revision = ++_configurationRevision;
     await _ensureRestored();
     if (_disposed || revision != _configurationRevision) return;
-    final credentials = await ref
-        .read(lokalLinkServiceProvider)
-        .pair(
-          origin: LokalRemoteService.normalizeOrigin(origin),
-          code: code,
-          expectedDesktopId: expectedDesktopId,
-        );
+    final linkService = ref.read(lokalLinkServiceProvider);
+    final credentials = await linkService.pair(
+      origin: LokalRemoteService.normalizeOrigin(origin),
+      code: code,
+      expectedDesktopId: expectedDesktopId,
+    );
+    final pairedName = linkService.lastPairedDesktopName;
     if (_disposed || revision != _configurationRevision) return;
     final vault = ref.read(lokalPairedDesktopsStoreProvider);
     String? previousDesktopId;
@@ -536,6 +538,12 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
     try {
       previousDesktopId = await vault.activeId();
       await vault.add(credentials);
+      if (pairedName != null) {
+        await vault.updateMetadata(
+          LokalPairedDesktopsStore.identity(credentials),
+          name: pairedName,
+        );
+      }
     } on MissingPluginException {
       vaultAvailable = false;
       // Keep legacy pairing operational on test runners without secure storage.
@@ -556,10 +564,28 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
     if (_disposed || revision != _configurationRevision) return;
     final saved = await ref.read(lokalRemoteCredentialsStoreProvider).read();
     if (_disposed || revision != _configurationRevision) return;
-    _credentials = saved;
+    final effective = saved ?? credentials;
+    if (vaultAvailable && saved != null && saved.pairingID != credentials.pairingID) {
+      try {
+        await vault.add(saved);
+        if (pairedName != null) {
+          await vault.updateMetadata(
+            LokalPairedDesktopsStore.identity(saved),
+            name: pairedName,
+          );
+        }
+      } on MissingPluginException {
+        // Ignore on legacy-only test runners.
+      }
+    }
+    if (_disposed || revision != _configurationRevision) return;
+    final resolvedName = pairedName ?? await _savedDesktopNameFor(effective);
+    if (_disposed || revision != _configurationRevision) return;
+    _credentials = effective;
     ref.invalidate(linkedDesktopProfileProvider);
     state = LokalRemoteControllerState(
-      config: LokalRemoteConfig.fromCredentials(credentials),
+      config: LokalRemoteConfig.fromCredentials(effective),
+      desktopName: resolvedName,
     );
     await connect();
   }
@@ -603,12 +629,23 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
       if (previousDesktopId != null) await vault.select(previousDesktopId);
       rethrow;
     }
+    final saved = await ref.read(lokalRemoteCredentialsStoreProvider).read();
+    final effective = saved ?? credentials;
+    if (saved != null && saved.pairingID != credentials.pairingID) {
+      try {
+        await vault.add(saved);
+      } on MissingPluginException {
+        // Ignore on legacy-only test runners.
+      }
+    }
+    final savedName = await _savedDesktopNameFor(effective);
     disconnect();
-    _credentials = credentials;
+    _credentials = effective;
     ref.invalidate(linkedDesktopProfileProvider);
     state = LokalRemoteControllerState(
       config: LokalRemoteConfig.fromCredentials(_credentials!),
       status: LokalRemoteConnectionStatus.disconnected,
+      desktopName: savedName,
     );
     await connect();
   }
@@ -947,6 +984,9 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
           ? error.httpStatusCode
           : null;
       if (error is LokalRemoteAuthException || statusCode == 401) {
+        if (await _trySwitchToBootedSiblingDesktop(credentials, generation)) {
+          return;
+        }
         _socketWanted = false;
         // The desktop may be temporarily locked or on another profile. Do
         // not abandon a durable pairing or require a new QR scan on return.
@@ -967,6 +1007,109 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
     } finally {
       if (!_disposed && generation == _generation) _openingSocket = false;
     }
+  }
+
+  Future<String> _savedDesktopNameFor(LokalRemoteCredentials credentials) async {
+    try {
+      final targetId = LokalPairedDesktopsStore.identity(credentials);
+      final entries = await ref
+          .read(lokalPairedDesktopsStoreProvider)
+          .readAll(legacyActive: credentials);
+      for (final entry in entries) {
+        if (entry.id == targetId && entry.name.trim().isNotEmpty) {
+          return entry.name;
+        }
+      }
+    } on Object {
+      // Fall back to default label when secure storage is unavailable in tests.
+    }
+    return 'Lokal desktop';
+  }
+
+  /// On a dual-boot machine, Windows and Linux share the same LAN IP/port
+  /// (`origin`) while owning distinct `desktopId`s and bearer tokens. When the
+  /// active OS rejects the previous OS's token with 401, check whether another
+  /// saved pairing on this phone cryptographically owns the running instance
+  /// via `/api/remote/identity` (which never discloses bearer tokens).
+  Future<bool> _trySwitchToBootedSiblingDesktop(
+    LokalRemoteCredentials current,
+    int generation,
+  ) async {
+    if (_syncInFlight ||
+        _statsSyncInFlight ||
+        _linkSync?.busy == true ||
+        state.syncProgress.busy ||
+        state.fileCopyProgress.busy) {
+      return false;
+    }
+    final vault = ref.read(lokalPairedDesktopsStoreProvider);
+    List<LokalPairedDesktop> entries;
+    try {
+      entries = await vault.readAll(legacyActive: current);
+    } on Object {
+      return false;
+    }
+    final currentId = LokalPairedDesktopsStore.identity(current);
+    final siblings = entries
+        .where(
+          (entry) =>
+              entry.id != currentId &&
+              entry.credentials.desktopId != null &&
+              entry.credentials.remoteToken.isNotEmpty,
+        )
+        .toList()
+      ..sort((a, b) {
+        final aSameOrigin = a.credentials.origin == current.origin ? 0 : 1;
+        final bSameOrigin = b.credentials.origin == current.origin ? 0 : 1;
+        return aSameOrigin.compareTo(bSameOrigin);
+      });
+    if (siblings.isEmpty) return false;
+
+    final linkService = ref.read(lokalLinkServiceProvider);
+    for (final sibling in siblings) {
+      if (_disposed || generation != _generation) return true;
+      final verified = await linkService.verifyDesktopIdentity(
+        current.origin,
+        sibling.credentials,
+      );
+      if (_disposed || generation != _generation) return true;
+      if (!verified) continue;
+
+      var nextCredentials = sibling.credentials;
+      if (nextCredentials.origin != current.origin) {
+        nextCredentials = LokalRemoteCredentials(
+          origin: current.origin,
+          remoteToken: nextCredentials.remoteToken,
+          apiKey: nextCredentials.apiKey,
+          desktopId: nextCredentials.desktopId,
+          desktopUserId: nextCredentials.desktopUserId,
+          pairingID: nextCredentials.pairingID,
+        );
+      }
+      try {
+        await vault.add(nextCredentials);
+        await ref.read(lokalRemoteCredentialsStoreProvider).write(nextCredentials);
+        final saved = await ref.read(lokalRemoteCredentialsStoreProvider).read();
+        if (saved != null) nextCredentials = saved;
+      } on Object {
+        return false;
+      }
+      if (_disposed || generation != _generation) return true;
+      _openingSocket = false;
+      _generation++;
+      _credentials = nextCredentials;
+      ref.invalidate(linkedDesktopProfileProvider);
+      state = LokalRemoteControllerState(
+        config: LokalRemoteConfig.fromCredentials(nextCredentials),
+        status: LokalRemoteConnectionStatus.connecting,
+        desktopName: sibling.name.trim().isNotEmpty
+            ? sibling.name
+            : 'Lokal desktop',
+      );
+      unawaited(_connectSocket());
+      return true;
+    }
+    return false;
   }
 
   void _socketConnectionChanged(bool connected) {
@@ -995,12 +1138,32 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
           disconnect();
           return;
         }
+        final formattedName =
+            LokalLinkService.formatDesktopDisplayName(
+              message.body['name'],
+              message.body['platform'],
+            ) ??
+            'Lokal desktop';
         state = state.copyWith(
-          desktopName: message.body['name'] as String? ?? 'Lokal desktop',
+          desktopName: formattedName,
           syncPreview: message.body['syncPreview'] is Map
               ? Map<String, dynamic>.from(message.body['syncPreview'] as Map)
               : null,
         );
+        final active = _credentials;
+        if (active != null) {
+          unawaited(() async {
+            try {
+              await ref.read(lokalPairedDesktopsStoreProvider).updateMetadata(
+                LokalPairedDesktopsStore.identity(active),
+                name: formattedName,
+                lastConnectedAt: DateTime.now(),
+              );
+            } on Object {
+              // Non-fatal on test runners without secure storage.
+            }
+          }());
+        }
         break;
       case 'state':
         _desktopState = Map<String, dynamic>.from(message.body);

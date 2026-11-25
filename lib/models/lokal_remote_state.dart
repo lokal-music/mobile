@@ -63,17 +63,31 @@ class LokalRemoteConfig {
     required this.origin,
     required this.hasRemoteToken,
     required this.hasApiKey,
+    this.desktopId,
+    this.pairingID,
   });
 
   final Uri origin;
   final bool hasRemoteToken;
   final bool hasApiKey;
+  final String? desktopId;
+  final String? pairingID;
+
+  /// Matches [LokalPairedDesktopsStore.identity] so two OS installations on a
+  /// dual-boot machine sharing [origin] never appear simultaneously active.
+  String get identity => desktopId?.trim().isNotEmpty == true
+      ? desktopId!
+      : pairingID?.trim().isNotEmpty == true
+      ? pairingID!
+      : origin.authority;
 
   factory LokalRemoteConfig.fromCredentials(LokalRemoteCredentials value) =>
       LokalRemoteConfig(
         origin: value.origin,
         hasRemoteToken: value.hasRemoteToken,
         hasApiKey: value.hasApiKey,
+        desktopId: value.desktopId,
+        pairingID: value.pairingID,
       );
 }
 

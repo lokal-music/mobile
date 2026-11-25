@@ -97,14 +97,57 @@ class LokalPairedDesktopsStore {
   Future<void> add(LokalRemoteCredentials credentials) => _serial(() async {
     final entries = await _readEntries();
     final id = identity(credentials);
-    final next = _entry(credentials, id: id);
     final index = entries.indexWhere((entry) => entry.id == id);
+    final existing = index >= 0 ? entries[index] : null;
+    final preservedName = existing != null &&
+            existing.name.trim().isNotEmpty &&
+            existing.name != existing.credentials.origin.host
+        ? existing.name
+        : null;
+    final next = _entry(
+      credentials,
+      id: id,
+      name: preservedName,
+      lastConnectedAt: existing?.lastConnectedAt,
+    );
     if (index < 0) {
       entries.add(next);
     } else {
       entries[index] = next;
     }
     await _writeEntries(entries, activeId: id);
+  });
+
+  Future<void> updateMetadata(
+    String id, {
+    String? name,
+    DateTime? lastConnectedAt,
+  }) => _serial(() async {
+    final entries = await _readEntries();
+    final index = entries.indexWhere((entry) => entry.id == id);
+    if (index < 0) return;
+    final current = entries[index];
+    final cleanName = name?.trim();
+    final nextName = (cleanName != null && cleanName.isNotEmpty)
+        ? cleanName
+        : current.name;
+    final nextConnectedAt = lastConnectedAt ?? current.lastConnectedAt;
+    if (nextName == current.name && nextConnectedAt == current.lastConnectedAt) {
+      return;
+    }
+    entries[index] = _entry(
+      current.credentials,
+      id: current.id,
+      name: nextName,
+      lastConnectedAt: nextConnectedAt,
+    );
+    final raw = await _storage.read(key: storageKey);
+    String? active;
+    try {
+      final data = raw == null ? null : jsonDecode(raw);
+      active = data is Map ? data['activeId'] as String? : null;
+    } on Object {}
+    await _writeEntries(entries, activeId: active);
   });
 
   Future<LokalRemoteCredentials?> select(String id) => _serial(() async {

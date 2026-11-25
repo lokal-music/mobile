@@ -71,4 +71,44 @@ void main() {
     expect(migrated.single.id, 'legacy-desktop');
     expect(await store.activeId(), 'legacy-desktop');
   });
+
+  test('dual-boot OS installations sharing an IP:port stay distinct and retain names', () async {
+    final store = LokalPairedDesktopsStore(storage: storage);
+    final sharedOrigin = Uri.parse('http://192.168.1.178:3421');
+    final windows = LokalRemoteCredentials(
+      origin: sharedOrigin,
+      desktopId: 'windows-partition-id',
+      desktopUserId: 'guest',
+      remoteToken: 'windows-token',
+      pairingID: '11111111-1111-4111-8111-111111111111',
+    );
+    final linux = LokalRemoteCredentials(
+      origin: sharedOrigin,
+      desktopId: 'linux-partition-id',
+      desktopUserId: 'guest',
+      remoteToken: 'linux-token',
+      pairingID: '22222222-2222-4222-8222-222222222222',
+    );
+
+    await store.add(windows);
+    await store.updateMetadata('windows-partition-id', name: 'MY-PC (Windows)');
+    await store.add(linux);
+    await store.updateMetadata('linux-partition-id', name: 'pop-os (Linux)');
+
+    // Re-adding credentials (e.g. after switching or address verification)
+    // preserves the learned hostname/platform label.
+    await store.add(windows);
+
+    final paired = await store.readAll();
+    expect(paired, hasLength(2));
+    expect(paired.map((d) => d.id), ['windows-partition-id', 'linux-partition-id']);
+    expect(paired.map((d) => d.name), ['MY-PC (Windows)', 'pop-os (Linux)']);
+
+    final winConfig = LokalRemoteConfig.fromCredentials(windows);
+    final linConfig = LokalRemoteConfig.fromCredentials(linux);
+    expect(winConfig.origin, linConfig.origin);
+    expect(winConfig.identity, 'windows-partition-id');
+    expect(linConfig.identity, 'linux-partition-id');
+    expect(winConfig.identity == linConfig.identity, isFalse);
+  });
 }

@@ -140,6 +140,29 @@ class LokalLinkService {
     }
   }
 
+  String? _lastPairedDesktopName;
+
+  /// Friendly name reported by the most recent `/api/remote/pair` response,
+  /// including OS platform when provided (e.g. `pop-os (Linux)`).
+  String? get lastPairedDesktopName => _lastPairedDesktopName;
+
+  static String? formatDesktopDisplayName(Object? rawName, [Object? rawPlatform]) {
+    final base = _cleanDeviceName(rawName);
+    final platformLabel = switch (rawPlatform) {
+      'linux' => 'Linux',
+      'win32' => 'Windows',
+      'darwin' => 'macOS',
+      _ => null,
+    };
+    if (base == null && platformLabel == null) return null;
+    if (base == null) return 'Lokal ($platformLabel)';
+    if (platformLabel == null ||
+        base.toLowerCase().contains(platformLabel.toLowerCase())) {
+      return base;
+    }
+    return '$base ($platformLabel)';
+  }
+
   Future<LokalRemoteCredentials> pair({
     required Uri origin,
     required String code,
@@ -152,6 +175,9 @@ class LokalLinkService {
       );
     await _requestLocalNetwork();
     final normalized = LokalRemoteService.normalizeOrigin(origin.toString());
+    final port = normalized.hasPort
+        ? normalized.port
+        : (normalized.scheme == 'https' ? 443 : 3421);
     final name =
         _cleanDeviceName(deviceName) ??
         await deviceDisplayName() ??
@@ -160,19 +186,66 @@ class LokalLinkService {
             : Platform.isAndroid
             ? 'Android device'
             : 'Mobile device');
-    final response = await http
-        .post(
-          normalized.replace(path: '/api/remote/pair'),
-          headers: {'content-type': 'application/json'},
-          body: jsonEncode({
-            'code': code,
-            'deviceName': name,
-            'deviceId': await deviceId(),
-          }),
-        )
-        .timeout(const Duration(seconds: 8));
-    if (response.statusCode != 200) throw const LokalRemoteAuthException();
-    final value = jsonDecode(response.body);
+    late final http.Response response;
+    try {
+      response = await http
+          .post(
+            normalized.replace(path: '/api/remote/pair'),
+            headers: {'content-type': 'application/json'},
+            body: jsonEncode({
+              'code': code,
+              'deviceName': name,
+              'deviceId': await deviceId(),
+            }),
+          )
+          .timeout(const Duration(seconds: 8));
+    } on TimeoutException {
+      throw LokalRemoteNetworkException(
+        'Could not reach Lokal at ${normalized.authority} (connection timed out — check that both devices share the same Wi-Fi/LAN and TCP port $port is allowed through your desktop firewall).',
+      );
+    } on SocketException {
+      throw LokalRemoteNetworkException(
+        'Could not reach Lokal at ${normalized.authority}. Check that Lokal is open on the same Wi-Fi/LAN and TCP port $port is allowed through your desktop firewall.',
+      );
+    } on HandshakeException {
+      throw const LokalRemoteNetworkException(
+        'TLS handshake with Lokal failed. Check the certificate or use LAN HTTP.',
+      );
+    } on http.ClientException {
+      throw LokalRemoteNetworkException(
+        'Could not reach Lokal at ${normalized.authority}. Check Wi-Fi/LAN connectivity and allow TCP port $port in your desktop firewall.',
+      );
+    }
+    if (response.statusCode != 200) {
+      String? serverError;
+      try {
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map && decoded['error'] is String) {
+          final text = (decoded['error'] as String).trim();
+          if (text.isNotEmpty) serverError = text;
+        }
+      } on FormatException {
+        // Non-JSON error response; fall back to status-based error below.
+      }
+      if (response.statusCode == 401) {
+        if (serverError != null) {
+          throw LokalRemoteConfigurationException(serverError);
+        }
+        throw const LokalRemoteAuthException();
+      }
+      throw LokalRemoteProtocolException(
+        serverError ??
+            'Desktop pairing failed (HTTP ${response.statusCode}). Try generating a new code.',
+      );
+    }
+    final Object? value;
+    try {
+      value = jsonDecode(response.body);
+    } on FormatException {
+      throw const LokalRemoteProtocolException(
+        'Lokal returned an invalid pairing response.',
+      );
+    }
     if (value is! Map ||
         value['token'] is! String ||
         value['desktopId'] is! String ||
@@ -180,6 +253,10 @@ class LokalLinkService {
       throw const LokalRemoteProtocolException(
         'Pairing response did not match this desktop.',
       );
+    _lastPairedDesktopName = formatDesktopDisplayName(
+      value['name'],
+      value['platform'],
+    );
     return LokalRemoteCredentials(
       origin: normalized,
       remoteToken: value['token'] as String,
@@ -187,7 +264,30 @@ class LokalLinkService {
       desktopUserId: value['user'] is Map
           ? (value['user'] as Map)['id']?.toString()
           : null,
+      pairingID: linkUuid(),
     );
+  }
+
+  /// Zero-secret challenge check proving whether the desktop currently running
+  /// at [origin] holds the paired verifier for [credentials] (e.g. after a
+  /// dual-boot machine reboots into another already-paired OS at the same IP).
+  Future<bool> verifyDesktopIdentity(
+    Uri origin,
+    LokalRemoteCredentials credentials,
+  ) async {
+    if (credentials.desktopId == null || credentials.remoteToken.isEmpty) {
+      return false;
+    }
+    try {
+      return await verifyLinkedDesktop(
+        client: _identityClient,
+        origin: origin,
+        credentials: credentials,
+        deviceId: await deviceId(),
+      );
+    } on Object {
+      return false;
+    }
   }
 
   Future<Uri> connect(LokalRemoteCredentials credentials) async {

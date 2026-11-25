@@ -61,7 +61,27 @@ class _SocketLink extends LokalLinkService {
 
 class _PairedStore extends LokalPairedDesktopsStore {
   final Map<String, LokalRemoteCredentials> entries = {};
+  final Map<String, String> names = {};
   String? selected;
+
+  @override
+  Future<List<LokalPairedDesktop>> readAll({
+    LokalRemoteCredentials? legacyActive,
+  }) async {
+    if (entries.isEmpty && legacyActive != null) {
+      final id = LokalPairedDesktopsStore.identity(legacyActive);
+      entries[id] = legacyActive;
+      selected = id;
+    }
+    return [
+      for (final entry in entries.entries)
+        LokalPairedDesktop(
+          id: entry.key,
+          name: names[entry.key] ?? entry.value.origin.host,
+          credentials: entry.value,
+        ),
+    ];
+  }
 
   @override
   Future<LokalRemoteCredentials?> resolveActive({
@@ -84,6 +104,18 @@ class _PairedStore extends LokalPairedDesktopsStore {
   }
 
   @override
+  Future<void> updateMetadata(
+    String id, {
+    String? name,
+    DateTime? lastConnectedAt,
+  }) async {
+    if (!entries.containsKey(id)) return;
+    if (name != null && name.trim().isNotEmpty) {
+      names[id] = name.trim();
+    }
+  }
+
+  @override
   Future<String?> activeId() async => selected;
 
   @override
@@ -103,6 +135,7 @@ class _PairedStore extends LokalPairedDesktopsStore {
       throw StateError('Desktop pairing changed. Refresh and retry.');
     }
     entries.remove(id);
+    names.remove(id);
     selected = entries.isEmpty ? null : entries.keys.last;
     return selected == null ? null : entries[selected];
   }
@@ -561,4 +594,87 @@ void main() {
       expect(service.commands, [(LokalRemoteAction.volume, .25)]);
     },
   );
+
+  testWidgets(
+    'dual-boot reboot into another paired OS at the same IP auto-switches on 401',
+    (tester) async {
+      final sharedOrigin = Uri.parse('http://192.168.1.178:3421');
+      final windows = LokalRemoteCredentials(
+        origin: sharedOrigin,
+        desktopId: 'windows-id',
+        remoteToken: 'windows-token',
+        pairingID: '11111111-1111-4111-8111-111111111111',
+      );
+      final linux = LokalRemoteCredentials(
+        origin: sharedOrigin,
+        desktopId: 'linux-id',
+        remoteToken: 'linux-token',
+        pairingID: '22222222-2222-4222-8222-222222222222',
+      );
+      final pairedStore = _PairedStore();
+      await pairedStore.add(windows);
+      await pairedStore.updateMetadata('windows-id', name: 'MY-PC (Windows)');
+      await pairedStore.add(linux);
+      await pairedStore.updateMetadata('linux-id', name: 'pop-os (Linux)');
+      await pairedStore.select('windows-id');
+
+      final credStore = _Store()..value = windows;
+      final link = _DualBootSocketLink(bootedDesktopId: 'linux-id');
+      final container = ProviderContainer(
+        overrides: [
+          lokalRemoteCredentialsStoreProvider.overrideWithValue(credStore),
+          lokalPairedDesktopsStoreProvider.overrideWithValue(pairedStore),
+          lokalLinkServiceProvider.overrideWithValue(link),
+          favoritesServiceProvider.overrideWithValue(_Favorites()),
+        ],
+      );
+      container.read(lokalRemoteControllerProvider);
+      await tester.pump();
+      await tester.pump();
+
+      final state = container.read(lokalRemoteControllerProvider);
+      expect(state.socketConnected, isTrue);
+      expect(state.config?.identity, 'linux-id');
+      expect(state.desktopName, 'pop-os (Linux)');
+      expect(credStore.value?.desktopId, 'linux-id');
+      expect(await pairedStore.activeId(), 'linux-id');
+
+      container.dispose();
+      await link.close();
+    },
+  );
+}
+
+class _DualBootSocketLink extends LokalLinkService {
+  _DualBootSocketLink({required this.bootedDesktopId});
+
+  final String bootedDesktopId;
+  bool _connected = false;
+
+  @override
+  bool get connected => _connected;
+
+  @override
+  void send(String type, Map<String, dynamic> body, {String? id}) {}
+
+  @override
+  Future<void> disconnect() async {
+    _connected = false;
+    await super.disconnect();
+  }
+
+  @override
+  Future<Uri> connect(LokalRemoteCredentials credentials) async {
+    if (credentials.desktopId != bootedDesktopId) {
+      throw const LokalRemoteAuthException();
+    }
+    _connected = true;
+    return credentials.origin;
+  }
+
+  @override
+  Future<bool> verifyDesktopIdentity(
+    Uri origin,
+    LokalRemoteCredentials credentials,
+  ) async => credentials.desktopId == bootedDesktopId;
 }
