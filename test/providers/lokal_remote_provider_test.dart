@@ -3,6 +3,7 @@ import 'package:flick/providers/lokal_remote_provider.dart';
 import 'package:flick/providers/favorites_provider.dart';
 import 'package:flick/services/favorites_service.dart';
 import 'package:flick/services/lokal_remote_credentials_store.dart';
+import 'package:flick/services/lokal_paired_desktops_store.dart';
 import 'package:flick/services/lokal_remote_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/widgets.dart';
@@ -55,6 +56,55 @@ class _SocketLink extends LokalLinkService {
     if (failure != null) throw failure!;
     _connected = true;
     return recoveredOrigin ?? credentials.origin;
+  }
+}
+
+class _PairedStore extends LokalPairedDesktopsStore {
+  final Map<String, LokalRemoteCredentials> entries = {};
+  String? selected;
+
+  @override
+  Future<LokalRemoteCredentials?> resolveActive({
+    LokalRemoteCredentials? legacyActive,
+  }) async {
+    if (entries.isEmpty && legacyActive != null) {
+      final id = LokalPairedDesktopsStore.identity(legacyActive);
+      entries[id] = legacyActive;
+      selected = id;
+    }
+    if (entries.isEmpty) return null;
+    return entries[selected] ?? entries.values.last;
+  }
+
+  @override
+  Future<void> add(LokalRemoteCredentials credentials) async {
+    final id = LokalPairedDesktopsStore.identity(credentials);
+    entries[id] = credentials;
+    selected = id;
+  }
+
+  @override
+  Future<String?> activeId() async => selected;
+
+  @override
+  Future<LokalRemoteCredentials?> select(String id) async {
+    selected = id;
+    return entries[id];
+  }
+
+  @override
+  Future<LokalRemoteCredentials?> remove(
+    LokalRemoteCredentials expected,
+  ) async {
+    final id = LokalPairedDesktopsStore.identity(expected);
+    final current = entries[id];
+    if (current == null ||
+        !SecureCredentialComparison.matches(current, expected)) {
+      throw StateError('Desktop pairing changed. Refresh and retry.');
+    }
+    entries.remove(id);
+    selected = entries.keys.lastOrNull;
+    return selected == null ? null : entries[selected];
   }
 }
 
@@ -158,6 +208,7 @@ ProviderContainer _container(_Store store, _Service service) =>
     ProviderContainer(
       overrides: [
         lokalRemoteCredentialsStoreProvider.overrideWithValue(store),
+        lokalPairedDesktopsStoreProvider.overrideWithValue(_PairedStore()),
         lokalRemoteServiceProvider.overrideWithValue(service),
       ],
     );
@@ -207,6 +258,7 @@ void main() {
       final container = ProviderContainer(
         overrides: [
           lokalRemoteCredentialsStoreProvider.overrideWithValue(store),
+          lokalPairedDesktopsStoreProvider.overrideWithValue(_PairedStore()),
           lokalLinkServiceProvider.overrideWithValue(link),
           favoritesServiceProvider.overrideWithValue(_Favorites()),
         ],
@@ -252,6 +304,7 @@ void main() {
     final container = ProviderContainer(
       overrides: [
         lokalRemoteCredentialsStoreProvider.overrideWithValue(store),
+        lokalPairedDesktopsStoreProvider.overrideWithValue(_PairedStore()),
         lokalLinkServiceProvider.overrideWithValue(link),
         favoritesServiceProvider.overrideWithValue(_Favorites()),
       ],
