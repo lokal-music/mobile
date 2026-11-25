@@ -103,7 +103,7 @@ class _PairedStore extends LokalPairedDesktopsStore {
       throw StateError('Desktop pairing changed. Refresh and retry.');
     }
     entries.remove(id);
-    selected = entries.keys.lastOrNull;
+    selected = entries.isEmpty ? null : entries.keys.last;
     return selected == null ? null : entries[selected];
   }
 }
@@ -344,6 +344,7 @@ void main() {
       final container = ProviderContainer(
         overrides: [
           lokalRemoteCredentialsStoreProvider.overrideWithValue(store),
+          lokalPairedDesktopsStoreProvider.overrideWithValue(_PairedStore()),
           lokalLinkServiceProvider.overrideWithValue(link),
           favoritesServiceProvider.overrideWithValue(_Favorites()),
         ],
@@ -369,6 +370,7 @@ void main() {
       final container = ProviderContainer(
         overrides: [
           lokalRemoteCredentialsStoreProvider.overrideWithValue(store),
+          lokalPairedDesktopsStoreProvider.overrideWithValue(_PairedStore()),
           lokalRemoteServiceProvider.overrideWithValue(_Service([])),
           lokalLinkServiceProvider.overrideWithValue(link),
           favoritesServiceProvider.overrideWithValue(_Favorites()),
