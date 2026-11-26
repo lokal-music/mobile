@@ -487,7 +487,9 @@ class LinkSyncCoordinator {
       }
     }
     const pageSize = 250;
-    final pages = (local.length / pageSize).ceil().clamp(1, 200);
+    final totalPages = (local.length / pageSize).ceil();
+    final complete = totalPages <= 200;
+    final pages = totalPages.clamp(1, 200);
     final snapshot = linkUuid().replaceAll('-', '');
     for (var page = 0; page < pages; page++) {
       _requireReady();
@@ -507,6 +509,7 @@ class LinkSyncCoordinator {
         'snapshot_id': snapshot,
         'page': page,
         'pages': pages,
+        'complete': complete,
         'items': items,
       });
     }
