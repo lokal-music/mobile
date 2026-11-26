@@ -1325,6 +1325,7 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
   ) async {
     bool isCurrent() => _isConnectionGenerationCurrent(connectionGeneration);
     Future<void> process() async {
+      Object? commandResult;
       await runIncomingPhoneCommand(
         isCurrent: isCurrent,
         handle: () async {
@@ -1479,7 +1480,7 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
         action != 'copyTracksToPhone' &&
         action != 'requestMobileStream') {
       await setDesktopTarget(false);
-      if (!_isConnectionGenerationCurrent(connectionGeneration)) return;
+      if (!_isConnectionGenerationCurrent(connectionGeneration)) return null;
     }
     if (!_isConnectionGenerationCurrent(connectionGeneration)) return;
     switch (action) {
@@ -1568,6 +1569,7 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
     }
     if (!_isConnectionGenerationCurrent(connectionGeneration)) return;
     _publishLocalState();
+    return null;
   }
 
   Future<void> _receiveDesktopTrackCopies(
