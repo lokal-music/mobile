@@ -753,111 +753,154 @@ class _BottomActionBar extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final toRemove = scanState.selectedRemoveCount;
     final isRemoving = scanState.isRemoving;
+    // The app shell exposes its mini-player + navigation reservation through
+    // MediaQuery.padding.bottom. Keep the action pill above that dock; use
+    // viewPadding only as the system-safe-area fallback when no dock exists.
+    final dockClearance = MediaQuery.paddingOf(context).bottom;
+    final systemInset = MediaQuery.viewPaddingOf(context).bottom;
+    final bottomClearance = dockClearance > systemInset
+        ? dockClearance
+        : systemInset;
 
-    return Container(
+    return Padding(
       padding: EdgeInsets.fromLTRB(
         AppConstants.spacingMd,
+        AppConstants.spacingSm,
         AppConstants.spacingMd,
-        AppConstants.spacingMd,
-        MediaQuery.viewPaddingOf(context).bottom + AppConstants.spacingMd,
+        bottomClearance + AppConstants.spacingSm,
       ),
-      decoration: BoxDecoration(
-        color: context.lokal.surface.withValues(alpha: 0.86),
-        border: Border(top: BorderSide(color: context.lokal.border)),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Row(
-            children: [
-              Icon(LucideIcons.info, size: 14, color: context.lokal.muted2),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  isRemoving
-                      ? l10n.removingDuplicates
-                      : l10n.readyToRemoveSongKeepingIn(
-                          toRemove,
-                          scanState.selectedKeepCount,
-                        ),
-                  style: TextStyle(
-                    fontFamily: LokalTheme.sans,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
-                    color: context.lokal.muted,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: AppConstants.spacingSm),
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              onPressed: isRemoving || toRemove == 0
-                  ? null
-                  : () => _confirmRemoveSelected(context, ref, toRemove),
-              icon: isRemoving
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
+      child: Container(
+        padding: const EdgeInsets.all(AppConstants.spacingSm),
+        decoration: BoxDecoration(
+          color: context.lokal.surface.withValues(alpha: 0.96),
+          borderRadius: BorderRadius.circular(28),
+          border: Border.all(color: context.lokal.border2),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.18),
+              blurRadius: 18,
+              offset: const Offset(0, 5),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 2, 8, 8),
+              child: Row(
+                children: [
+                  Icon(LucideIcons.info, size: 14, color: context.lokal.muted2),
+                  const SizedBox(width: 7),
+                  Expanded(
+                    child: Text(
+                      isRemoving
+                          ? l10n.removingDuplicates
+                          : l10n.readyToRemoveSongKeepingIn(
+                              toRemove,
+                              scanState.selectedKeepCount,
+                            ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontFamily: LokalTheme.sans,
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w500,
+                        color: context.lokal.muted,
                       ),
-                    )
-                  : const Icon(LucideIcons.trash2, size: 18),
-              label: Text(
-                isRemoving ? l10n.removing : l10n.removeDuplicates3(toRemove),
-                style: const TextStyle(
-                  fontFamily: LokalTheme.sans,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: context.lokal.red.withValues(alpha: 0.92),
-                foregroundColor: Colors.white,
-                disabledBackgroundColor: context.lokal.surface3.withValues(
-                  alpha: 0.5,
-                ),
-                disabledForegroundColor: context.lokal.muted2,
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(AppConstants.radiusMd),
-                ),
-                elevation: 0,
+                    ),
+                  ),
+                ],
               ),
             ),
-          ),
-          const SizedBox(height: AppConstants.spacingXs),
-          SizedBox(
-            width: double.infinity,
-            child: TextButton(
-              onPressed: isRemoving
-                  ? null
-                  : () => _confirmRemoveAll(context, ref, toRemove),
-              style: TextButton.styleFrom(
-                foregroundColor: context.lokal.muted,
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(AppConstants.radiusMd),
-                ),
-              ),
-              child: Text(
-                l10n.orRemoveAllUsingRecommendedPicks,
-                style: TextStyle(
-                  fontFamily: LokalTheme.sans,
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w600,
-                  color: context.lokal.muted,
-                  decoration: TextDecoration.underline,
-                  decorationColor: context.lokal.muted2,
-                ),
-              ),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final primary = ElevatedButton.icon(
+                  onPressed: isRemoving || toRemove == 0
+                      ? null
+                      : () => _confirmRemoveSelected(context, ref, toRemove),
+                  icon: isRemoving
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Icon(LucideIcons.trash2, size: 16),
+                  label: Text(
+                    isRemoving ? l10n.removing : l10n.removeDuplicates3(toRemove),
+                    maxLines: 2,
+                    textAlign: TextAlign.center,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontFamily: LokalTheme.sans,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: context.lokal.red.withValues(alpha: 0.94),
+                    foregroundColor: Colors.white,
+                    disabledBackgroundColor: context.lokal.surface3,
+                    disabledForegroundColor: context.lokal.muted2,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 12,
+                    ),
+                    shape: const StadiumBorder(),
+                    elevation: 0,
+                  ),
+                );
+                final recommended = OutlinedButton(
+                  onPressed: isRemoving
+                      ? null
+                      : () => _confirmRemoveAll(context, ref, toRemove),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: context.lokal.muted,
+                    side: BorderSide(color: context.lokal.border2),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 11,
+                    ),
+                    shape: const StadiumBorder(),
+                  ),
+                  child: Text(
+                    l10n.orRemoveAllUsingRecommendedPicks,
+                    maxLines: 2,
+                    textAlign: TextAlign.center,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontFamily: LokalTheme.sans,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: context.lokal.muted,
+                    ),
+                  ),
+                );
+
+                if (constraints.maxWidth >= 340) {
+                  return Row(
+                    children: [
+                      Expanded(flex: 3, child: primary),
+                      const SizedBox(width: 8),
+                      Expanded(flex: 2, child: recommended),
+                    ],
+                  );
+                }
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    primary,
+                    const SizedBox(height: 6),
+                    recommended,
+                  ],
+                );
+              },
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
