@@ -69,7 +69,7 @@ class LinkAudioServer {
     var start = 0, end = total - 1, status = HttpStatus.ok;
     final range = request.method == 'GET' ? request.headers.value(HttpHeaders.rangeHeader) : null;
     if (range != null) {
-      final match = RegExp(r'^bytes=(\\d*)-(\\d*)$').firstMatch(range.trim());
+      final match = RegExp(r'^bytes=(\d*)-(\d*)$').firstMatch(range.trim());
       if (match == null || (match.group(1)!.isEmpty && match.group(2)!.isEmpty)) {
         request.response.statusCode = HttpStatus.requestedRangeNotSatisfiable;
         request.response.headers.set(HttpHeaders.contentRangeHeader, 'bytes */$total');
