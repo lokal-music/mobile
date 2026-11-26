@@ -1134,6 +1134,7 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
   }
 
   void _socketConnectionChanged(bool connected) {
+    if (!connected) unawaited(LinkAudioServer.instance.close());
     if (_disposed ||
         connected ||
         _openingSocket ||
@@ -1474,7 +1475,8 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
         value = body['value'];
     if (state.controlsDesktop &&
         action != 'handoffToDesktop' &&
-        action != 'copyTracksToPhone') {
+        action != 'copyTracksToPhone' &&
+        action != 'requestMobileStream') {
       await setDesktopTarget(false);
       if (!_isConnectionGenerationCurrent(connectionGeneration)) return;
     }
