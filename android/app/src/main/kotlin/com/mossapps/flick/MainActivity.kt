@@ -2052,13 +2052,11 @@ class MainActivity: FlutterActivity() {
                 Log.w("MainActivity", "File.delete failed: ${fileEx.message}")
             }
 
-            // Last resort: dropping the MediaStore row removes the track from
-            // the library even if the file itself could not be deleted.
-            if (removeFromMediaStore(filePath)) {
-                Log.w("MainActivity", "File not removed, dropped MediaStore entry only: $filePath")
-                return true
-            }
-
+            // A MediaStore-only deletion is NOT a successful file deletion.
+            // Removing the index entry while leaving bytes on disk causes the
+            // next library scan to import the same track again. Keep the
+            // operation failed so the caller retains the library row and can
+            // report/retry the physical deletion.
             false
         } catch (e: Exception) {
             Log.w("MainActivity", "deleteDocumentViaSaf failed: ${e.message}", e)
