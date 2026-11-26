@@ -1330,8 +1330,8 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
         isCurrent: isCurrent,
         handle: () async {
           commandResult = await _handlePhoneCommand(
-          body,
-          connectionGeneration: connectionGeneration,
+            body,
+            connectionGeneration: connectionGeneration,
           );
         },
         acknowledgeSuccess: () async {
@@ -1344,7 +1344,9 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
           if (!isCurrent()) return;
           ref.read(lokalLinkServiceProvider).send('ack', {
             'ok': true,
-            if (body['action'] == 'requestMobileStream' && commandResult is String) 'url': commandResult,
+            if (body['action'] == 'requestMobileStream' &&
+                commandResult is String)
+              'url': commandResult,
           }, id: messageId);
         },
         acknowledgeFailure: (error) async {
@@ -1547,20 +1549,32 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
         if (value is! Map || value['trackId'] is! String) {
           throw const FormatException('Invalid mobile stream request.');
         }
-        if (WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) {
+        if (WidgetsBinding.instance.lifecycleState !=
+            AppLifecycleState.resumed) {
           throw const LokalRemoteProtocolException('Keep Lokal open in the foreground to stream phone music.');
         }
         final tracks = await SongRepository().getAllSongs();
         Song? requested;
         for (final song in tracks) {
-          if (song.id == value['trackId']) { requested = song; break; }
+          if (song.id == value['trackId']) {
+            requested = song;
+            break;
+          }
         }
         final path = requested?.filePath;
-        if (requested == null || path == null || path.isEmpty || requested.isNetworkSource || requested.isExternal) {
-          throw const LokalRemoteProtocolException('This phone song is no longer available locally.');
+        if (requested == null ||
+            path == null ||
+            path.isEmpty ||
+            requested.isNetworkSource ||
+            requested.isExternal) {
+          throw const LokalRemoteProtocolException(
+            'This phone song is no longer available locally.',
+          );
         }
         if (!await File(path).exists()) {
-          throw const LokalRemoteProtocolException('The phone audio file is unavailable.');
+          throw const LokalRemoteProtocolException(
+            'The phone audio file is unavailable.',
+          );
         }
         if (!_isConnectionGenerationCurrent(connectionGeneration)) return null;
         return LinkAudioServer.instance.publish(path);
