@@ -467,7 +467,7 @@ class _Header extends StatelessWidget {
               l10n.duplicateCleaner,
               style: TextStyle(
                 fontFamily: LokalTheme.sans,
-                fontSize: 34,
+                fontSize: 30,
                 height: 1.1,
                 letterSpacing: -1.2,
                 fontWeight: FontWeight.w800,
@@ -505,7 +505,8 @@ class _SummaryCard extends ConsumerStatefulWidget {
 }
 
 class _SummaryCardState extends ConsumerState<_SummaryCard> {
-  bool _collapsed = false;
+  // Keep the results list visible on first open; expand the explanation on demand.
+  bool _collapsed = true;
 
   @override
   Widget build(BuildContext context) {
@@ -1175,7 +1176,10 @@ class _DuplicateGroupCardState extends ConsumerState<_DuplicateGroupCard> {
                         children: [
                           Container(height: 1, color: context.lokal.border),
                           const SizedBox(height: AppConstants.spacingSm),
-                          Row(
+                          Wrap(
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            spacing: 8,
+                            runSpacing: 6,
                             children: [
                               Text(
                                 l10n.chooseWhichToKeep,
@@ -1186,7 +1190,6 @@ class _DuplicateGroupCardState extends ConsumerState<_DuplicateGroupCard> {
                                   color: context.lokal.text,
                                 ),
                               ),
-                              const Spacer(),
                               if (keptCount != 1 ||
                                   !keepSet.contains(
                                     widget.group.recommendedKeep.id,
@@ -1431,7 +1434,10 @@ class _SongSelectRow extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 4,
+                        crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
                           Container(
                             padding: const EdgeInsets.symmetric(
@@ -1469,23 +1475,20 @@ class _SongSelectRow extends StatelessWidget {
                             ),
                           ),
                           const SizedBox(width: 6),
-                          Expanded(
-                            child: Text(
-                              '$bitrateLabel • $sizeLabel',
-                              style: TextStyle(
-                                fontFamily: LokalTheme.sans,
-                                fontSize: 11.5,
-                                fontWeight: FontWeight.w700,
-                                color: selected
-                                    ? context.lokal.accent
-                                    : context.lokal.text,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
+                          Text(
+                            '$bitrateLabel • $sizeLabel',
+                            style: TextStyle(
+                              fontFamily: LokalTheme.sans,
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w700,
+                              color: selected
+                                  ? context.lokal.accent
+                                  : context.lokal.text,
                             ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                           ),
                           if (isRecommended) ...[
-                            const SizedBox(width: 6),
                             Container(
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 6,
