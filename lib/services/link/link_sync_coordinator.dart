@@ -479,7 +479,7 @@ class LinkSyncCoordinator {
     final local = <Song>[];
     for (final song in songs) {
       final path = song.filePath;
-      if (path == null || path.isEmpty || song.isNetworkSource) continue;
+      if (path == null || path.isEmpty || song.isNetworkSource || song.isExternal) continue;
       try {
         if (await File(path).exists()) local.add(song);
       } on FileSystemException {
@@ -503,6 +503,7 @@ class LinkSyncCoordinator {
             'album': song.album,
             'album_artist': song.albumArtist,
             'duration': song.duration.inSeconds,
+            if (song.albumArt != null && Uri.tryParse(song.albumArt!)?.scheme == 'https' && !RegExp(r'[?&](?:token|signature|expires|auth)=', caseSensitive: false).hasMatch(song.albumArt!)) 'artwork_url': song.albumArt,
           },
       ];
       await socket.request('catalog.push', {
