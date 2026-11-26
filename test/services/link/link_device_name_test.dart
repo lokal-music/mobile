@@ -112,7 +112,7 @@ void main() {
         final first = await received.future.timeout(const Duration(seconds: 3));
         expect(first.type, 'hello');
         expect(first.body, {
-          'capabilities': ['track_lifecycle'],
+          'capabilities': ['track_lifecycle', 'mobile_catalog'],
           'deviceName': 'Pixel Tablet',
         });
         await service.disconnect();
@@ -122,7 +122,7 @@ void main() {
         expect(
           (await received.future.timeout(const Duration(seconds: 3))).body,
           {
-            'capabilities': ['track_lifecycle'],
+            'capabilities': ['track_lifecycle', 'mobile_catalog'],
             'deviceName': 'Kitchen tablet',
           },
         );
