@@ -475,6 +475,7 @@ class LinkSyncCoordinator {
 
   Future<void> _publishMobileCatalog() async {
     _requireReady();
+    if (!socket.supportsMobileCatalog) return;
     final songs = await SongRepository().getAllSongs();
     final local = <Song>[];
     for (final song in songs) {
