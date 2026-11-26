@@ -638,8 +638,13 @@ class SongsNotifier extends AsyncNotifier<SongsState> {
     if (!_sortChanged) _sortOption = savedSort;
     if (!_fileTypeChanged) _fileTypeFilter = savedFilter;
 
-    await TransferArtifactRepairService.instance.repairIfNeeded();
     final songs = preferLocalLibrarySongs(await repository.getAllSongs());
+
+    // Repair legacy transfer filenames/metadata off the critical first-frame
+    // path. The repair writes through Isar, so libraryChangeRevisionProvider
+    // will refresh consumers after any repaired rows are committed.
+    unawaited(TransferArtifactRepairService.instance.repairIfNeeded());
+
     return SongsState(
       songs: songs,
       sortOption: _sortOption,
