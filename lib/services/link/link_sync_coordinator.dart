@@ -478,13 +478,25 @@ class LinkSyncCoordinator {
     if (!socket.supportsMobileCatalog) return;
     final songs = await SongRepository().getAllSongs();
     final local = <Song>[];
-    for (final song in songs) {
-      final path = song.filePath;
-      if (path == null || path.isEmpty || song.isNetworkSource || song.isExternal) continue;
-      try {
-        if (await File(path).exists()) local.add(song);
-      } on FileSystemException {
-        // Ignore inaccessible paths; the phone remains the source of truth.
+    // Bound filesystem metadata checks; do not serialize thousands of stats
+    // on the UI isolate during a large-library sync.
+    const existenceBatchSize = 32;
+    for (var offset = 0; offset < songs.length; offset += existenceBatchSize) {
+      _requireReady();
+      final batch = songs.skip(offset).take(existenceBatchSize).toList();
+      final available = await Future.wait(batch.map((song) async {
+        final path = song.filePath;
+        if (path == null || path.isEmpty || song.isNetworkSource || song.isExternal) {
+          return false;
+        }
+        try {
+          return await File(path).exists();
+        } on FileSystemException {
+          return false;
+        }
+      }));
+      for (var index = 0; index < batch.length; index++) {
+        if (available[index]) local.add(batch[index]);
       }
     }
     const pageSize = 250;
