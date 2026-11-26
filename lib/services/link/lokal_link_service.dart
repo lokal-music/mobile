@@ -72,6 +72,8 @@ class LokalLinkService {
   bool get supportsTrackLifecycle =>
       _peerCapabilities == null ||
       _peerCapabilities!.contains('track_lifecycle');
+  bool get supportsMobileCatalog =>
+      _peerCapabilities?.contains('mobile_catalog') ?? false;
 
   Future<String> deviceId() async {
     final prefs = await SharedPreferences.getInstance();
