@@ -56,6 +56,7 @@ class LinkMessage {
     'library.push',
     'library.pull',
     'library.ops',
+    'catalog.push',
     'bye',
   };
   final String type;
