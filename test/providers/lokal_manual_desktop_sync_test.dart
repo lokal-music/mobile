@@ -73,7 +73,7 @@ void main() {
     expect(
       screen,
       containsCode(
-        'Full desktop-library, metadata, likes and playlist sync is manual',
+        'Listening history syncs automatically. Tap Sync now to update songs, likes, playlists and metadata.',
       ),
     );
   });
