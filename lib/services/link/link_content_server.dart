@@ -88,7 +88,7 @@ class LinkContentServer {
     var status = HttpStatus.ok;
     final range = request.method == 'HEAD' ? null : request.headers.value(HttpHeaders.rangeHeader);
     if (range != null) {
-      final match = RegExp(r'^bytes=(\\d*)-(\\d*)$').firstMatch(range.trim());
+      final match = RegExp(r'^bytes=(\d*)-(\d*)$').firstMatch(range.trim());
       if (match != null && (match.group(1)!.isNotEmpty || match.group(2)!.isNotEmpty)) {
         final first = match.group(1)!;
         final last = match.group(2)!;
