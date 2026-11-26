@@ -8715,7 +8715,7 @@
   "linkPlayOnPhone": "Play on this phone",
   "linkUpdateDesktop": "Update Lokal on your PC to control this phone from it and sync your library.",
   "linkMergeLibraries": "Merge your libraries",
-  "linkMergePreview": "Keep music, likes and playlists from both devices. Completed plays are combined once. No music files are deleted. Later edits sync in both directions.",
+  "linkMergePreview": "Keep songs, likes and playlists from both devices. Listening history is combined without duplicates. No audio files are copied or deleted.",
   "linkMerge": "Merge",
   "linkNotNow": "Not now",
   "linkHistoryCount": "{count} desktop plays ready to merge",
