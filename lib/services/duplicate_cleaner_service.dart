@@ -403,11 +403,6 @@ class DuplicateCleanerService {
         folderTreeUri: treeUri,
         filePath: targetUri,
       );
-      // MediaStore deletion is a fallback for providers that reject the
-      // SAF tree operation. A failed native call must not be treated as success.
-      if (!deleted) {
-        deleted = await MusicFolderService.removeFromMediaStore(targetUri);
-      }
     }
 
     if (!path.startsWith('content://')) {
