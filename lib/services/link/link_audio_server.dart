@@ -21,8 +21,10 @@ class LinkAudioServer {
     final ip = await _lanAddress();
     await NetworkLocalAccess.ensure(Uri(scheme: 'http', host: ip));
     final server = await _ensureServer();
-    final token = List<int>.generate(24, (_) => _random.nextInt(256))
-        .map((value) => value.toRadixString(16).padLeft(2, '0')).join();
+    final token = List<int>.generate(
+      24,
+      (_) => _random.nextInt(256),
+    ).map((value) => value.toRadixString(16).padLeft(2, '0')).join();
     _files[token] = path;
     while (_files.length > 32) {
       _files.remove(_files.keys.first);
@@ -56,7 +58,9 @@ class LinkAudioServer {
         network.name: network.addresses.map((item) => item.address),
     });
     if (address == null) {
-      throw const SocketException('Connect both devices to the same Wi-Fi or LAN.');
+      throw const SocketException(
+        'Connect both devices to the same Wi-Fi or LAN.',
+      );
     }
     return address;
   }
@@ -68,7 +72,9 @@ class LinkAudioServer {
       await request.response.close();
       return;
     }
-    final token = request.uri.pathSegments.isEmpty ? '' : request.uri.pathSegments.first;
+    final token = request.uri.pathSegments.isEmpty
+        ? ''
+        : request.uri.pathSegments.first;
     final path = _files[token];
     if (path == null) {
       request.response.statusCode = HttpStatus.notFound;
@@ -89,9 +95,13 @@ class LinkAudioServer {
         : null;
     if (range != null) {
       final match = RegExp(r'^bytes=(\d*)-(\d*)$').firstMatch(range.trim());
-      if (match == null || (match.group(1)!.isEmpty && match.group(2)!.isEmpty)) {
+      if (match == null ||
+          (match.group(1)!.isEmpty && match.group(2)!.isEmpty)) {
         request.response.statusCode = HttpStatus.requestedRangeNotSatisfiable;
-        request.response.headers.set(HttpHeaders.contentRangeHeader, 'bytes */$total');
+        request.response.headers.set(
+          HttpHeaders.contentRangeHeader,
+          'bytes */$total',
+        );
         await request.response.close();
         return;
       }
@@ -100,7 +110,10 @@ class LinkAudioServer {
         final suffix = int.tryParse(last);
         if (suffix == null || suffix <= 0 || total == 0) {
           request.response.statusCode = HttpStatus.requestedRangeNotSatisfiable;
-          request.response.headers.set(HttpHeaders.contentRangeHeader, 'bytes */$total');
+          request.response.headers.set(
+            HttpHeaders.contentRangeHeader,
+            'bytes */$total',
+          );
           await request.response.close();
           return;
         }
