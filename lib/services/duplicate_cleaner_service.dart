@@ -431,6 +431,19 @@ class DuplicateCleanerService {
         path,
       );
     }
+
+    // Refresh the index only after the physical file is gone. Never use this
+    // operation as a substitute for deleting the underlying audio bytes.
+    if (!path.startsWith('content://')) {
+      final mediaStorePath = path.startsWith('file://')
+          ? (Uri.tryParse(path)?.toFilePath() ?? path)
+          : path;
+      try {
+        await MusicFolderService.removeFromMediaStore(mediaStorePath);
+      } catch (_) {
+        // The physical file is already gone; index refresh is best-effort.
+      }
+    }
   }
 
   Future<bool> _isFileSharedWithSurvivors(
