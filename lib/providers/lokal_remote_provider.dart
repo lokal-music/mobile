@@ -1469,8 +1469,7 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
         value = body['value'];
     if (state.controlsDesktop &&
         action != 'handoffToDesktop' &&
-        action != 'copyTracksToPhone' &&
-        action != 'requestMobileStream') {
+        action != 'copyTracksToPhone') {
       await setDesktopTarget(false);
       if (!_isConnectionGenerationCurrent(connectionGeneration)) return;
     }
