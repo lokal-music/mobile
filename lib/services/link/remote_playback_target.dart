@@ -4,7 +4,10 @@ import 'library_song_identity.dart';
 /// A concrete desktop-library selection. All IDs refer to recordings already
 /// synced from the *active* paired desktop; no metadata-based fallback.
 class DesktopLibrarySelection {
-  const DesktopLibrarySelection({required this.trackId, required this.trackIds});
+  const DesktopLibrarySelection({
+    required this.trackId,
+    required this.trackIds,
+  });
   final String trackId;
   final List<String> trackIds;
 }
@@ -25,14 +28,17 @@ DesktopLibrarySelection? desktopLibrarySelection({
       // after its local audio path and sourceType become phone-owned.
       if (song.remoteServerId != desktopServerId ||
           song.remoteId?.isNotEmpty != true ||
-          song.filePath?.startsWith('ghost://') == true) return null;
+          song.filePath?.startsWith('ghost://') == true)
+        return null;
       return song.remoteId;
     }
     final matched = index.desktopCopiesByPhoneId[song.id] ?? const <Song>[];
-    final fromDesktop = matched.where((copy) =>
-        copy.remoteServerId == desktopServerId &&
-        copy.remoteId?.isNotEmpty == true &&
-        copy.filePath?.startsWith('lokal://') == true);
+    final fromDesktop = matched.where(
+      (copy) =>
+          copy.remoteServerId == desktopServerId &&
+          copy.remoteId?.isNotEmpty == true &&
+          copy.filePath?.startsWith('ghost://') != true,
+    );
     if (fromDesktop.length != 1) return null;
     return fromDesktop.single.remoteId;
   }
@@ -53,7 +59,6 @@ DesktopLibrarySelection? desktopLibrarySelection({
   return DesktopLibrarySelection(trackId: trackId, trackIds: trackIds);
 }
 
-
 /// Resolve shared recordings, including saved playlist metadata, when the
 /// phone has no desktop Song row. Query candidates come from the paired
 /// desktop's existing /api/remote/library/tracks endpoint. Only the same
@@ -65,28 +70,36 @@ String? matchedDesktopIdFromCandidates({
 }) {
   if (selected.sourceType != null ||
       selected.filePath?.startsWith('ghost://') == true ||
-      selected.duration <= Duration.zero) return null;
+      selected.duration <= Duration.zero)
+    return null;
 
   final remoteSongs = <Song>[];
   final seen = <String>{};
   for (final row in candidates) {
     final id = row['id']?.toString();
     final seconds = row['duration'];
-    if (id == null || id.isEmpty || !seen.add(id) ||
-        seconds is! num || !seconds.isFinite || seconds <= 0) continue;
-    remoteSongs.add(Song(
-      id: 'desktop-candidate:$id',
-      title: row['title']?.toString() ?? '',
-      artist: row['artist']?.toString() ?? '',
-      album: row['album']?.toString(),
-      albumArtist: row['album_artist']?.toString(),
-      duration: Duration(milliseconds: (seconds * 1000).round()),
-      fileType: row['fileType']?.toString() ?? 'unknown',
-      filePath: 'lokal://$desktopServerId/${Uri.encodeComponent(id)}',
-      sourceType: 'lokal',
-      remoteId: id,
-      remoteServerId: desktopServerId,
-    ));
+    if (id == null ||
+        id.isEmpty ||
+        !seen.add(id) ||
+        seconds is! num ||
+        !seconds.isFinite ||
+        seconds <= 0)
+      continue;
+    remoteSongs.add(
+      Song(
+        id: 'desktop-candidate:$id',
+        title: row['title']?.toString() ?? '',
+        artist: row['artist']?.toString() ?? '',
+        album: row['album']?.toString(),
+        albumArtist: row['album_artist']?.toString(),
+        duration: Duration(milliseconds: (seconds * 1000).round()),
+        fileType: row['fileType']?.toString() ?? 'unknown',
+        filePath: 'lokal://$desktopServerId/${Uri.encodeComponent(id)}',
+        sourceType: 'lokal',
+        remoteId: id,
+        remoteServerId: desktopServerId,
+      ),
+    );
   }
   final indexed = preferredLibrarySongIndex(
     remoteSongs,
@@ -96,7 +109,6 @@ String? matchedDesktopIdFromCandidates({
   // Zero matches and multiple matching desktop recordings are both unsafe.
   return copies.length == 1 ? copies.single.remoteId : null;
 }
-
 
 /// The UI can drive a target without claiming it is the local native engine.
 abstract interface class RemotePlaybackTarget {
@@ -143,10 +155,9 @@ class DesktopPlaybackTarget implements RemotePlaybackTarget {
         'trackIds': selection.trackIds,
       });
 
-  Future<void> queueDesktopTrack(String trackId) =>
-      command('queueTracks', {
-        'trackIds': [trackId],
-      });
+  Future<void> queueDesktopTrack(String trackId) => command('queueTracks', {
+    'trackIds': [trackId],
+  });
 
   @override
   Future<void> pause() => command('pause', null);
