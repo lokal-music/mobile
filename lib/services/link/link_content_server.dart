@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math';
-import 'dart:typed_data';
 
 import '../sources/local_network_access.dart';
 import '../casting/cast_lan_address.dart';
