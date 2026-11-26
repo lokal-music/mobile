@@ -1989,9 +1989,20 @@ class MainActivity: FlutterActivity() {
 
             if (fileUri.scheme == "content") {
                 return try {
-                    DocumentsContract.deleteDocument(contentResolver, fileUri)
+                    // SAF document URIs must go through DocumentsContract.
+                    // MediaStore item URIs are content:// too, but are not
+                    // document URIs; delete them through ContentResolver.
+                    val deleted = if (DocumentsContract.isDocumentUri(this, fileUri)) {
+                        DocumentsContract.deleteDocument(contentResolver, fileUri)
+                    } else {
+                        contentResolver.delete(fileUri, null, null) > 0
+                    }
+                    if (!deleted) {
+                        Log.w("MainActivity", "Content URI deletion returned no rows: $filePath")
+                    }
+                    deleted
                 } catch (e: Exception) {
-                    Log.w("MainActivity", "content URI deletion failed: ${e.message}")
+                    Log.w("MainActivity", "content URI deletion failed: ${e.message}", e)
                     false
                 }
             }
