@@ -58,6 +58,6 @@ void main() {
     final response = await (await client.headUrl(uri)).close();
     expect(response.statusCode, HttpStatus.ok);
     expect(response.headers.value(HttpHeaders.contentLengthHeader), '8');
-    expect(await response.drain<List<int>>(), isEmpty);
+    expect(await response.fold<int>(0, (count, chunk) => count + chunk.length), 0);
   });
 }
