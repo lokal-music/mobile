@@ -148,11 +148,11 @@ class _LokalDesktopLinkScreenState
         title: lokalText('Copy missing songs both ways?'),
         message: nativePlan != null
             ? lokalText(
-                '{count} song files will be prepared and queued. Keep Lokal open until preparation finishes, and keep the desktop awake on Wi-Fi. Originals stay on their source device. Follow progress and recovery in File transfers.',
+                '{count} files will be queued. Keep Lokal open and the desktop awake while transfers are prepared. Originals stay on their source device.',
                 args: {'count': nativePlan.total},
               )
             : lokalText(
-                '{send} songs to your PC, {receive} new songs to this phone, and {recover} existing private copies to your selected music folder under Lokal Desktop. Recovery uses files already on your phone; no re-download. Existing files are kept. Keep both apps open on Wi-Fi; check again to retry unfinished copies.',
+                '{send} files to your PC, {receive} files to this phone and {recover} existing copies to your music folder. Existing files are kept; nothing is deleted. Keep both devices awake and connected to Wi-Fi.',
                 args: {
                   'send': plan.toDesktop.length,
                   'receive': plan.toPhone.length,
@@ -290,7 +290,7 @@ class _LokalDesktopLinkScreenState
               Text(title, style: TextStyle(color: t.muted)),
             Text(
               lokalText(
-                'Saves original song files under Lokal Desktop in your selected music folder. Existing private copies can be recovered here too. Nothing is deleted or replaced. Check again to retry unfinished files.',
+                'Copies missing audio files in either direction. Existing files are never replaced or deleted. Choose where PC files are saved below.',
               ),
               style: TextStyle(color: t.muted),
             ),
@@ -298,7 +298,7 @@ class _LokalDesktopLinkScreenState
               const SizedBox(height: 8),
               Text(
                 lokalText(
-                  'Keep Lokal open and your iPhone unlocked, with your desktop awake, while copying over Wi-Fi. If copying stops, check again to retry unfinished files.',
+                  'On iPhone, keep Lokal open and the phone unlocked until transfers finish.',
                 ),
                 style: TextStyle(color: t.muted),
               ),
@@ -465,7 +465,7 @@ class _LokalDesktopLinkScreenState
             const SizedBox(height: 8),
             Text(
               lokalText(
-                'Listening history, minutes and play counts sync automatically in small batches while your desktop is linked. Full desktop-library, metadata, likes and playlist sync is manual: tap Sync now. No full library scan runs on startup or reconnection. Optional phone-download transfers stay queued until Sync now.',
+                'Listening history syncs automatically. Tap Sync now to update songs, likes, playlists and metadata. This does not copy audio files; use Copy missing song files for that.',
               ),
               style: TextStyle(color: t.muted),
             ),
@@ -474,7 +474,7 @@ class _LokalDesktopLinkScreenState
               const SizedBox(height: 8),
               Text(
                 lokalText(
-                  'Keep both devices connected. Completed work is saved; reconnect or retry to continue.',
+                  'Reconnect and tap Sync now to resume. Completed work is kept.',
                 ),
                 style: TextStyle(color: t.muted),
               ),
