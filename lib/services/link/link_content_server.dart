@@ -15,16 +15,18 @@ class LinkContentServer {
   HttpServer? _server;
   String? _baseUrl;
   final _files = <String, String>{};
+  final _tokensByPath = <String, String>{};
   final _random = Random.secure();
-
-  void beginSnapshot() => _files.clear();
 
   Future<String> urlFor(String filePath) async {
     final file = File(filePath);
     if (!await file.exists()) throw StateError('The phone song is no longer available.');
     await _ensureServer();
+    final existing = _tokensByPath[filePath];
+    if (existing != null && _files.containsKey(existing)) return '$_baseUrl/$existing';
     final token = _token();
     _files[token] = filePath;
+    _tokensByPath[filePath] = token;
     return '$_baseUrl/$token';
   }
 
@@ -168,6 +170,7 @@ class LinkContentServer {
 
   Future<void> close() async {
     _files.clear();
+    _tokensByPath.clear();
     _baseUrl = null;
     final server = _server;
     _server = null;
