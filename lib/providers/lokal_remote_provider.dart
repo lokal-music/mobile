@@ -1482,7 +1482,7 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
       await setDesktopTarget(false);
       if (!_isConnectionGenerationCurrent(connectionGeneration)) return null;
     }
-    if (!_isConnectionGenerationCurrent(connectionGeneration)) return;
+    if (!_isConnectionGenerationCurrent(connectionGeneration)) return null;
     switch (action) {
       case 'togglePlay':
         await player.togglePlayPause();
@@ -1567,7 +1567,7 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
       default:
         throw const FormatException('Unsupported phone command.');
     }
-    if (!_isConnectionGenerationCurrent(connectionGeneration)) return;
+    if (!_isConnectionGenerationCurrent(connectionGeneration)) return null;
     _publishLocalState();
     return null;
   }
