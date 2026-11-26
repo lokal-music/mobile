@@ -8,7 +8,9 @@ import '../../data/database.dart';
 import '../../data/repositories/song_repository.dart';
 import '../../models/song.dart';
 import '../../models/playlist.dart';
+
 import 'package:flutter/foundation.dart' show visibleForTesting;
+
 import 'link_protocol.dart';
 import 'link_favorite_snapshot.dart';
 import 'transfer_artifact_cleaner.dart';
@@ -18,6 +20,7 @@ class LinkJournal {
   LinkJournal._();
   static final instance = LinkJournal._();
   final changes = StreamController<void>.broadcast();
+
   /// Play-event updates only; used by the bounded stats sync scheduler.
   final historyChanges = StreamController<void>.broadcast();
   bool applyingRemote = false;
@@ -150,7 +153,9 @@ class LinkJournal {
     List<Song>? candidates,
   }) async {
     await _loadKeys();
-    final songs = candidates ?? await SongRepository().getAllSongs();
+    final songs = (candidates ?? await SongRepository().getAllSongs())
+        .where((song) => song.filePath?.startsWith('ghost://') != true)
+        .toList(growable: false);
     final rawIncomingKey = track['track_key']?.toString() ?? '';
     final effectiveKey = _keyRedirects[rawIncomingKey] ?? rawIncomingKey;
     final targetKeys = <String>{
@@ -367,8 +372,8 @@ class LinkJournal {
       for (var position = 0; position < playlist.songIds.length; position++) {
         // Online Flow entries have snapshots even when never scanned locally.
         final songId = playlist.songIds[position];
-        final song = songs[songId] ??
-            playlist.songSnapshots[songId]?.toSong(songId);
+        final song =
+            songs[songId] ?? playlist.songSnapshots[songId]?.toSong(songId);
         if (song == null) continue;
         final key = await trackKeyFor(song);
         members.add(key);
@@ -394,7 +399,10 @@ class LinkJournal {
     await prefs.setString('lokal.link.playlists_snapshot', jsonEncode(current));
   }
 
-  Future<Map<String, dynamic>> historyAfter(int cursor, {int limit = 250}) async {
+  Future<Map<String, dynamic>> historyAfter(
+    int cursor, {
+    int limit = 250,
+  }) async {
     if (limit < 1 || limit > 250) {
       throw RangeError.range(limit, 1, 250, 'limit');
     }
@@ -547,7 +555,8 @@ class LinkJournal {
       final fields = jsonDecode(row.fieldsJson) as Map<String, dynamic>;
       if (!fields.containsKey('video_clip')) continue;
       final track = fields['track'];
-      if (row.deviceId == localDevice && track is Map &&
+      if (row.deviceId == localDevice &&
+          track is Map &&
           track['id'] != song.id) {
         continue;
       }
@@ -595,8 +604,8 @@ class LinkJournal {
           if (fields is Map) {
             final tk = fields['track_key']?.toString() ?? '';
             final rawTk = fields['raw_track_key']?.toString() ?? '';
-            matched = candidateKeys.contains(tk) ||
-                candidateKeys.contains(rawTk);
+            matched =
+                candidateKeys.contains(tk) || candidateKeys.contains(rawTk);
           }
         } catch (_) {}
       }

@@ -656,10 +656,10 @@ class LinkSyncCoordinator {
     final desktopDeletions = <String>{};
     for (final operation in operations) {
       if (operation.deviceId != desktopId) continue;
-      if (operation.op == 'playlist.create') {
-        desktopPlaylistIds.add(operation.entityId);
-      } else if (operation.op == 'playlist.delete') {
+      if (operation.op == 'playlist.delete') {
         desktopDeletions.add(operation.entityId);
+      } else {
+        desktopPlaylistIds.add(operation.entityId);
       }
     }
     // A playlist originally created on the phone can later be deleted on
@@ -1098,12 +1098,19 @@ class LinkSyncCoordinator {
           );
         }
         final onlineSnapshots = <String, PlaylistSongSnapshot>{};
+        final snapshotMembers = <String>[];
         final projection = await state.resolveMembers((member) async {
           final song = await _match({
             ...member.fields,
             'track_key': member.trackKey,
           });
-          if (song != null) return song.id;
+          if (song != null) {
+            if (song.isNetworkSource) {
+              onlineSnapshots[song.id] = PlaylistSongSnapshot.fromSong(song);
+            }
+            snapshotMembers.add(await journal.trackKeyFor(song));
+            return song.id;
+          }
 
           // Desktop playlists must retain entries even when their original
           // audio has not been copied or the mobile catalogue cannot match it.
@@ -1143,6 +1150,7 @@ class LinkSyncCoordinator {
           onlineSnapshots[reference.id] = PlaylistSongSnapshot.fromSong(
             reference,
           );
+          snapshotMembers.add(await journal.trackKeyFor(reference));
           return reference.id;
         });
         final songIds = projection.songIds;
@@ -1196,7 +1204,7 @@ class LinkSyncCoordinator {
             // Snapshot is the *local projection*, not all remote entries:
             // unmatched desktop tracks must never look locally removed on
             // the next capture and be deleted remotely.
-            'members': projection.matchedKeys,
+            'members': snapshotMembers,
           };
         }
         await prefs.setString(
