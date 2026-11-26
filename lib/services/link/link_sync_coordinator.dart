@@ -474,7 +474,6 @@ class LinkSyncCoordinator {
   Future<void> _publishMobileCatalog() async {
     _requireReady();
     final deviceId = await LinkJournal.instance.deviceId();
-    LinkContentServer.instance.beginSnapshot();
     final songs = await SongRepository().getAllSongs();
     final snapshot = linkUuid();
     socket.send('catalog.begin', {
