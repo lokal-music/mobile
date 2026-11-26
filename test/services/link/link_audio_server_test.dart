@@ -34,7 +34,10 @@ void main() {
 
     expect(response.statusCode, HttpStatus.partialContent);
     expect(response.headers.value(HttpHeaders.acceptRangesHeader), 'bytes');
-    expect(response.headers.value(HttpHeaders.contentRangeHeader), 'bytes 5-9/26');
+    expect(
+      response.headers.value(HttpHeaders.contentRangeHeader),
+      'bytes 5-9/26',
+    );
     expect(response.headers.value(HttpHeaders.contentLengthHeader), '5');
     expect(await utf8.decoder.bind(response).join(), 'fghij');
   });
@@ -58,6 +61,9 @@ void main() {
     final response = await (await client.headUrl(uri)).close();
     expect(response.statusCode, HttpStatus.ok);
     expect(response.headers.value(HttpHeaders.contentLengthHeader), '8');
-    expect(await response.fold<int>(0, (count, chunk) => count + chunk.length), 0);
+    expect(
+      await response.fold<int>(0, (count, chunk) => count + chunk.length),
+      0,
+    );
   });
 }
