@@ -611,6 +611,31 @@ void main() {
     expect(covers.first.songs.map((s) => s.id), ['a']);
   });
 
+  test('Cover Flow shows local album fallback while mixes are loading', () {
+    final songs = [
+      _track('a1', 'Album A', trackNumber: 1),
+      _track('a2', 'Album A', trackNumber: 2),
+      _track('b1', 'Album B', trackNumber: 1),
+    ];
+    final container = ProviderContainer(
+      overrides: [
+        konnektedLibraryProvider.overrideWithValue(AsyncData(songs)),
+        konnektedMadeForYouProvider.overrideWithValue(
+          const AsyncLoading(),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    final covers = container.read(konnektedCoverAlbumsProvider);
+    expect(covers.hasValue, isTrue);
+    expect(covers.value!.map((album) => album.albumName), [
+      'Album A',
+      'Album B',
+    ]);
+    expect(covers.value!.first.songs.map((song) => song.id), ['a1', 'a2']);
+  });
+
   test(
     'Cover Flow back finds complete local album, in disc and track order',
     () {
