@@ -426,7 +426,7 @@ class LokalLinkService {
       cancelOnError: true,
     );
     send('hello', {
-      'capabilities': const ['track_lifecycle'],
+      'capabilities': const ['track_lifecycle', 'mobile_catalog'],
       if (name != null) 'deviceName': name,
     });
     _connections.add(true);
