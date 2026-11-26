@@ -21,6 +21,7 @@ import '../services/link/lokal_link_service.dart';
 import '../services/link/link_protocol.dart';
 import '../services/link/link_journal.dart';
 import '../services/link/link_sync_coordinator.dart';
+import '../services/link/link_audio_server.dart';
 import '../services/link/link_profile_service.dart';
 import '../services/link/link_file_copy.dart';
 import '../services/link/desktop_track_copy_command.dart';
@@ -1320,9 +1321,10 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
   ) async {
     bool isCurrent() => _isConnectionGenerationCurrent(connectionGeneration);
     Future<void> process() async {
+      Object? commandResult;
       await runIncomingPhoneCommand(
         isCurrent: isCurrent,
-        handle: () => _handlePhoneCommand(
+        handle: () async => commandResult = await _handlePhoneCommand(
           body,
           connectionGeneration: connectionGeneration,
         ),
@@ -1336,6 +1338,7 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
           if (!isCurrent()) return;
           ref.read(lokalLinkServiceProvider).send('ack', {
             'ok': true,
+            if (body['action'] == 'requestMobileStream' && commandResult is String) 'url': commandResult,
           }, id: messageId);
         },
         acknowledgeFailure: (error) async {
@@ -1459,7 +1462,7 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
     });
   }
 
-  Future<void> _handlePhoneCommand(
+  Future<Object?> _handlePhoneCommand(
     Map<String, dynamic> body, {
     required int connectionGeneration,
   }) async {
@@ -1533,6 +1536,24 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
       case 'copyTracksToPhone':
         await _receiveDesktopTrackCopies(value, connectionGeneration);
         break;
+      case 'requestMobileStream':
+        if (value is! Map || value['trackId'] is! String) {
+          throw const FormatException('Invalid mobile stream request.');
+        }
+        if (WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) {
+          throw const LokalRemoteProtocolException('Keep Lokal open in the foreground to stream phone music.');
+        }
+        final tracks = await SongRepository().getAllSongs();
+        final requested = tracks.where((song) => song.id == value['trackId']).firstOrNull;
+        final path = requested?.filePath;
+        if (requested == null || path == null || path.isEmpty || requested.isNetworkSource || requested.isExternal) {
+          throw const LokalRemoteProtocolException('This phone song is no longer available locally.');
+        }
+        if (!await File(path).exists()) {
+          throw const LokalRemoteProtocolException('The phone audio file is unavailable.');
+        }
+        if (!_isConnectionGenerationCurrent(connectionGeneration)) return null;
+        return LinkAudioServer.instance.publish(path);
       default:
         throw const FormatException('Unsupported phone command.');
     }
