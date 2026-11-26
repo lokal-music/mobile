@@ -772,16 +772,11 @@ class _BottomActionBar extends ConsumerWidget {
       child: Container(
         padding: const EdgeInsets.all(AppConstants.spacingSm),
         decoration: BoxDecoration(
-          color: context.lokal.surface.withValues(alpha: 0.96),
+          color: Colors.transparent,
           borderRadius: BorderRadius.circular(28),
-          border: Border.all(color: context.lokal.border2),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.18),
-              blurRadius: 18,
-              offset: const Offset(0, 5),
-            ),
-          ],
+          border: Border.all(
+            color: context.lokal.border2.withValues(alpha: 0.55),
+          ),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
