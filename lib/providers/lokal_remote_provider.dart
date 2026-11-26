@@ -1136,7 +1136,6 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
   }
 
   void _socketConnectionChanged(bool connected) {
-    if (!connected) unawaited(LinkAudioServer.instance.close());
     if (_disposed ||
         connected ||
         _openingSocket ||
