@@ -10,6 +10,7 @@ import '../../models/lokal_remote_state.dart';
 import '../lokal_remote_service.dart';
 import 'link_protocol.dart';
 import 'link_identity.dart';
+import 'link_content_server.dart';
 
 class LokalDiscoveredDesktop {
   const LokalDiscoveredDesktop({
@@ -434,6 +435,7 @@ class LokalLinkService {
 
   void _lost(WebSocket socket) {
     if (!identical(_socket, socket)) return;
+    unawaited(LinkContentServer.instance.close());
     ++_epoch;
     _socket = null;
     _peerCapabilities = null;
@@ -487,6 +489,7 @@ class LokalLinkService {
     _subscription = null;
     _peerCapabilities = null;
     _failRequests();
+    unawaited(LinkContentServer.instance.close());
     if (socket != null && !_closed) _connections.add(false);
     await subscription?.cancel();
     await socket?.close(WebSocketStatus.normalClosure);
