@@ -17,6 +17,8 @@ class LinkContentServer {
   final _files = <String, String>{};
   final _random = Random.secure();
 
+  void beginSnapshot() => _files.clear();
+
   Future<String> urlFor(String filePath) async {
     final file = File(filePath);
     if (!await file.exists()) throw StateError('The phone song is no longer available.');
