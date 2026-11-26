@@ -11,6 +11,7 @@ class LinkAudioServer {
   static final instance = LinkAudioServer._();
 
   HttpServer? _server;
+  Future<HttpServer>? _binding;
   final Map<String, String> _files = {};
   final Random _random = Random.secure();
 
@@ -19,17 +20,28 @@ class LinkAudioServer {
     if (!await file.exists()) throw StateError('The phone audio file is unavailable.');
     final ip = await _lanAddress();
     await NetworkLocalAccess.ensure(Uri(scheme: 'http', host: ip));
-    var server = _server;
-    if (server == null) {
-      server = await HttpServer.bind(InternetAddress.anyIPv4, 0);
-      _server = server;
-      server.listen(_handle, onError: (_) {});
-    }
+    final server = await _ensureServer();
     final token = List<int>.generate(24, (_) => _random.nextInt(256))
         .map((value) => value.toRadixString(16).padLeft(2, '0')).join();
     _files[token] = path;
     while (_files.length > 32) _files.remove(_files.keys.first);
     return 'http://$ip:${server.port}/$token';
+  }
+
+  Future<HttpServer> _ensureServer() {
+    final current = _server;
+    if (current != null) return Future.value(current);
+    final pending = _binding;
+    if (pending != null) return pending;
+    final opening = HttpServer.bind(InternetAddress.anyIPv4, 0).then((server) {
+      _server = server;
+      server.listen(_handle, onError: (_) {});
+      return server;
+    });
+    _binding = opening;
+    return opening.whenComplete(() {
+      if (identical(_binding, opening)) _binding = null;
+    });
   }
 
   Future<String> _lanAddress() async {
