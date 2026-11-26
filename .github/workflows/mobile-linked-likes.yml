@@ -44,9 +44,10 @@ jobs:
           lib/services/link/link_journal.dart
           lib/services/link/link_sync_coordinator.dart
           lib/services/favorites_service.dart
-      - name: Verify online-only favorites and sync metadata
+      - name: Verify online-only favorites, mobile catalogue publishing and sync metadata
         run: >-
           flutter test --no-pub
           test/services/link/link_favorite_snapshot_test.dart
+          test/services/link/mobile_catalog_publish_test.dart
           test/services/online_favorites_test.dart
       - run: git diff --exit-code -- pubspec.lock

@@ -363,8 +363,8 @@ class LinkSyncCoordinator {
         // Older clients recorded some online-only IDs in the favorites
         // baseline without journaling their like. Reconcile durable hearts
         // before reading the outgoing cursor so Sync Now repairs them.
-        final likedIds =
-            (prefs.getStringList('favorite_song_ids') ?? []).toSet();
+        final likedIds = (prefs.getStringList('favorite_song_ids') ?? [])
+            .toSet();
         await LinkJournal.instance.captureFavorites(likedIds);
       }
       _requireReady();
@@ -472,11 +472,23 @@ class LinkSyncCoordinator {
     if (changed || !_background) MilestoneService.changes.add(null);
   }
 
+  @visibleForTesting
+  Future<void> publishMobileCatalogForTesting() => _publishMobileCatalog();
 
   Future<void> _publishMobileCatalog() async {
     _requireReady();
     if (!socket.supportsMobileCatalog) return;
     final songs = await SongRepository().getAllSongs();
+    final entities = await Database.songs.getAll([
+      for (final song in songs) ?int.tryParse(song.id),
+    ]);
+    final mediaUris = <String, String>{};
+    for (final row in entities) {
+      final uri = row?.mediaStoreUri;
+      if (row != null && uri != null) {
+        mediaUris[row.id.toString()] = uri;
+      }
+    }
     final local = <Song>[];
     // Bound filesystem metadata checks; do not serialize thousands of stats
     // on the UI isolate during a large-library sync.
@@ -484,17 +496,32 @@ class LinkSyncCoordinator {
     for (var offset = 0; offset < songs.length; offset += existenceBatchSize) {
       _requireReady();
       final batch = songs.skip(offset).take(existenceBatchSize).toList();
-      final available = await Future.wait(batch.map((song) async {
-        final path = song.filePath;
-        if (path == null || path.isEmpty || song.isNetworkSource || song.isExternal) {
-          return false;
-        }
-        try {
-          return await File(path).exists();
-        } on FileSystemException {
-          return false;
-        }
-      }));
+      final available = await Future.wait(
+        batch.map((song) async {
+          final path = song.filePath;
+          if (path == null ||
+              path.isEmpty ||
+              song.isNetworkSource ||
+              song.isExternal ||
+              path.startsWith('ghost://') ||
+              path.startsWith('lokal://') ||
+              path.startsWith('pending:')) {
+            return false;
+          }
+          final uri = Uri.tryParse(path);
+          if (uri?.scheme == 'content') return true;
+          try {
+            final fsPath = uri?.scheme == 'file' ? uri!.toFilePath() : path;
+            if (await File(fsPath).exists()) return true;
+          } on FileSystemException {
+            // Fall back to persisted Android MediaStore URI below.
+          } on UnsupportedError {
+            // Non-file URI scheme.
+          }
+          final mediaUri = mediaUris[song.id];
+          return mediaUri != null && mediaUri.startsWith('content://');
+        }),
+      );
       for (var index = 0; index < batch.length; index++) {
         if (available[index]) local.add(batch[index]);
       }
@@ -520,7 +547,13 @@ class LinkSyncCoordinator {
             'year': song.year,
             'genre': song.genre,
             'duration': song.duration.inSeconds,
-            if (song.albumArt != null && Uri.tryParse(song.albumArt!)?.scheme == 'https' && !RegExp(r'[?&](?:token|signature|expires|auth)=', caseSensitive: false).hasMatch(song.albumArt!)) 'artwork_url': song.albumArt,
+            if (song.albumArt != null &&
+                Uri.tryParse(song.albumArt!)?.scheme == 'https' &&
+                !RegExp(
+                  r'[?&](?:token|signature|expires|auth)=',
+                  caseSensitive: false,
+                ).hasMatch(song.albumArt!))
+              'artwork_url': song.albumArt,
           },
       ];
       await socket.request('catalog.push', {
@@ -698,10 +731,7 @@ class LinkSyncCoordinator {
               entry['sha256'].toString().trim().toLowerCase(),
     };
 
-    final allKeys = <String>{
-      if (keepKey.isNotEmpty) keepKey,
-      ...removedKeys,
-    };
+    final allKeys = <String>{if (keepKey.isNotEmpty) keepKey, ...removedKeys};
 
     final probeTitle = fields['title']?.toString() ?? '';
     final probeArtist = fields['artist']?.toString() ?? '';
@@ -804,8 +834,7 @@ class LinkSyncCoordinator {
     // redundant duplicate file(s)!
     final playCountMap = await RecentlyPlayedRepository().getPlayCounts();
     final groupPlayCounts = <int, int>{
-      for (final c in candidates)
-        c.id: playCountMap[c.id.toString()] ?? 0,
+      for (final c in candidates) c.id: playCountMap[c.id.toString()] ?? 0,
     };
     final group = DuplicateGroup(
       key: keepKey.isNotEmpty ? keepKey : 'remote_dedup',
