@@ -1,12 +1,13 @@
 import '../services/link/library_sync_notification.dart';
 import '../services/link/file_copy_notification.dart';
 import '../data/database.dart';
+import '../data/repositories/song_repository.dart';
 import '../services/link/link_download_outbox.dart';
 import '../services/favorites_service.dart';
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show WebSocketException;
+import 'dart:io' show File, WebSocketException;
 import 'dart:typed_data';
 
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
@@ -21,6 +22,7 @@ import '../services/link/lokal_link_service.dart';
 import '../services/link/link_protocol.dart';
 import '../services/link/link_journal.dart';
 import '../services/link/link_sync_coordinator.dart';
+import '../services/link/link_audio_server.dart';
 import '../services/link/link_profile_service.dart';
 import '../services/link/link_file_copy.dart';
 import '../services/link/desktop_track_copy_command.dart';
@@ -197,6 +199,7 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
     });
     ref.onDispose(() {
       _copyPlanner?.cancel();
+      unawaited(LinkAudioServer.instance.close());
       _syncNotification.dispose();
       _copyNotification.dispose();
       _disposed = true;
@@ -393,6 +396,7 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
     _linkTimer?.cancel();
     _statsDebounce?.cancel();
     _linkSync = null;
+    unawaited(LinkAudioServer.instance.close());
     unawaited(ref.read(lokalLinkServiceProvider).disconnect());
     NotificationService().release(_notificationOwner);
     _generation++;
@@ -1132,6 +1136,7 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
   }
 
   void _socketConnectionChanged(bool connected) {
+    if (!connected) unawaited(LinkAudioServer.instance.close());
     if (_disposed ||
         connected ||
         _openingSocket ||
@@ -1338,6 +1343,7 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
           if (!isCurrent()) return;
           ref.read(lokalLinkServiceProvider).send('ack', {
             'ok': true,
+            if (body['action'] == 'requestMobileStream' && commandResult is String) 'url': commandResult,
           }, id: messageId);
         },
         acknowledgeFailure: (error) async {
@@ -1470,7 +1476,8 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
         value = body['value'];
     if (state.controlsDesktop &&
         action != 'handoffToDesktop' &&
-        action != 'copyTracksToPhone') {
+        action != 'copyTracksToPhone' &&
+        action != 'requestMobileStream') {
       await setDesktopTarget(false);
       if (!_isConnectionGenerationCurrent(connectionGeneration)) return;
     }
@@ -1535,6 +1542,27 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
       case 'copyTracksToPhone':
         await _receiveDesktopTrackCopies(value, connectionGeneration);
         break;
+      case 'requestMobileStream':
+        if (value is! Map || value['trackId'] is! String) {
+          throw const FormatException('Invalid mobile stream request.');
+        }
+        if (WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) {
+          throw const LokalRemoteProtocolException('Keep Lokal open in the foreground to stream phone music.');
+        }
+        final tracks = await SongRepository().getAllSongs();
+        Song? requested;
+        for (final song in tracks) {
+          if (song.id == value['trackId']) { requested = song; break; }
+        }
+        final path = requested?.filePath;
+        if (requested == null || path == null || path.isEmpty || requested.isNetworkSource || requested.isExternal) {
+          throw const LokalRemoteProtocolException('This phone song is no longer available locally.');
+        }
+        if (!await File(path).exists()) {
+          throw const LokalRemoteProtocolException('The phone audio file is unavailable.');
+        }
+        if (!_isConnectionGenerationCurrent(connectionGeneration)) return null;
+        return LinkAudioServer.instance.publish(path);
       default:
         throw const FormatException('Unsupported phone command.');
     }
