@@ -129,6 +129,7 @@ class LokalDesktopSource extends NetworkSourceService {
 
   bool supportsSizeMatching = false;
   bool _historyArtworkUploading = false;
+  bool _catalogArtworkUploading = false;
 
   Future<bool> requireOriginalFileSupport(
     LokalRemoteCredentials credentials,
@@ -276,6 +277,71 @@ class LokalDesktopSource extends NetworkSourceService {
       // This auxiliary transfer must never block listening statistics.
     } finally {
       _historyArtworkUploading = false;
+    }
+  }
+
+  /// Upload bounded cover thumbnails for mobile-only catalogue tracks whose
+  /// Desktop ghost row lacks both a local cover and a public artwork URL.
+  Future<void> uploadCatalogArtwork(
+    LokalRemoteCredentials credentials,
+    Map<String, Song> songsByTrackKey,
+    List<String> missingTrackKeys, {
+    int maxCovers = 80,
+  }) async {
+    if (_catalogArtworkUploading ||
+        missingTrackKeys.isEmpty ||
+        songsByTrackKey.isEmpty ||
+        maxCovers <= 0) {
+      return;
+    }
+    _catalogArtworkUploading = true;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final seen = <String>{};
+      var uploaded = 0;
+      var attempted = 0;
+      for (final key in missingTrackKeys) {
+        if (uploaded >= maxCovers) break;
+        if (key.isEmpty || key.length > 1500 || !seen.add(key)) continue;
+        final song = songsByTrackKey[key];
+        if (song == null || song.isNetworkSource) continue;
+        final cacheKey =
+            'lokal.link.catalog_artwork.${credentials.desktopId}.'
+            '${sha256.convert(utf8.encode(key))}';
+        final lastSent = prefs.getInt(cacheKey) ?? 0;
+        if (DateTime.now().millisecondsSinceEpoch - lastSent <
+            const Duration(days: 30).inMilliseconds) {
+          continue;
+        }
+        if (++attempted > maxCovers * 2) break;
+        try {
+          final jpg = await _phoneCoverThumbnail(song);
+          if (jpg == null) continue;
+          final response = await http
+              .post(
+                credentials.origin.replace(path: '/api/remote/catalog/artwork'),
+                headers: {
+                  ..._headers(credentials),
+                  'content-type': 'application/json',
+                },
+                body: jsonEncode({
+                  'track_key': key,
+                  'image_base64': base64Encode(jpg),
+                }),
+              )
+              .timeout(const Duration(seconds: 8));
+          if (response.statusCode == 200) {
+            await prefs.setInt(cacheKey, DateTime.now().millisecondsSinceEpoch);
+            uploaded++;
+          }
+        } on Object {
+          continue;
+        }
+      }
+    } on Object {
+      // Auxiliary cover upload must never block catalogue sync.
+    } finally {
+      _catalogArtworkUploading = false;
     }
   }
 

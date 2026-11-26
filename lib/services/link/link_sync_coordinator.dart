@@ -531,6 +531,8 @@ class LinkSyncCoordinator {
     final complete = totalPages <= 200;
     final pages = totalPages.clamp(1, 200).toInt();
     final snapshot = linkUuid().replaceAll('-', '');
+    final missingArtwork = <String>[];
+    final seenMissing = <String>{};
     for (var page = 0; page < pages; page++) {
       _requireReady();
       final start = page * pageSize;
@@ -546,7 +548,7 @@ class LinkSyncCoordinator {
             'disc_num': song.discNumber,
             'year': song.year,
             'genre': song.genre,
-            'duration': song.duration.inSeconds,
+            'duration': (song.duration.inMilliseconds / 1000).round(),
             if (song.albumArt != null &&
                 Uri.tryParse(song.albumArt!)?.scheme == 'https' &&
                 !RegExp(
@@ -556,13 +558,35 @@ class LinkSyncCoordinator {
               'artwork_url': song.albumArt,
           },
       ];
-      await socket.request('catalog.push', {
+      final reply = await socket.request('catalog.push', {
         'snapshot_id': snapshot,
         'page': page,
         'pages': pages,
         'complete': complete,
         'items': items,
       });
+      final rawMissing = reply.body['missingArtwork'];
+      if (rawMissing is List) {
+        for (final entry in rawMissing) {
+          final key = entry?.toString() ?? '';
+          if (key.isNotEmpty && seenMissing.add(key)) {
+            missingArtwork.add(key);
+          }
+        }
+      }
+    }
+    if (missingArtwork.isNotEmpty) {
+      final byKey = <String, Song>{
+        for (final song in local)
+          linkTrackKey(song.artist, song.title, song.duration): song,
+      };
+      unawaited(
+        LokalDesktopSource.instance.uploadCatalogArtwork(
+          credentials,
+          byKey,
+          missingArtwork,
+        ),
+      );
     }
   }
 
