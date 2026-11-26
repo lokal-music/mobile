@@ -1323,9 +1323,9 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
       await runIncomingPhoneCommand(
         isCurrent: isCurrent,
         handle: () async {
-          commandResult = await _handlePhoneCommand(
-          body,
-          connectionGeneration: connectionGeneration,
+          await _handlePhoneCommand(
+            body,
+            connectionGeneration: connectionGeneration,
           );
         },
         acknowledgeSuccess: () async {
@@ -1461,7 +1461,7 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
     });
   }
 
-  Future<Object?> _handlePhoneCommand(
+  Future<void> _handlePhoneCommand(
     Map<String, dynamic> body, {
     required int connectionGeneration,
   }) async {
