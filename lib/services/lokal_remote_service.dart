@@ -289,14 +289,23 @@ class LokalRemoteService {
     LokalRemoteCredentials credentials,
     String title,
   ) async {
-    if (title.trim().isEmpty) return const [];
+    final trimmed = title.trim();
+    if (trimmed.isEmpty) return const [];
+    // Desktop's ?q= uses SQL LIKE. Strip parentheticals/brackets and trailing
+    // " - ..." suffixes so "Song (Artist Mix)" also returns "Song - Artist Mix"
+    // for recording-level verification in matchedDesktopIdFromCandidates.
+    final stripped = trimmed
+        .replaceFirst(RegExp(r'\s*[(\[].*$'), '')
+        .replaceFirst(RegExp(r'\s+[-–—]\s+.*$'), '')
+        .trim();
+    final query = stripped.length >= 3 ? stripped : trimmed;
     const pageSize = 250;
     const maxPages = 4;
     final candidates = <Map<String, dynamic>>[];
     for (var page = 0; page < maxPages; page++) {
       final uri = _endpoint(credentials.origin, 'library/tracks').replace(
         queryParameters: {
-          'q': title.trim(),
+          'q': query,
           'limit': '$pageSize',
           'offset': '${page * pageSize}',
         },
