@@ -489,12 +489,12 @@ class LinkSyncCoordinator {
     const pageSize = 250;
     final totalPages = (local.length / pageSize).ceil();
     final complete = totalPages <= 200;
-    final pages = totalPages.clamp(1, 200);
+    final pages = totalPages.clamp(1, 200).toInt();
     final snapshot = linkUuid().replaceAll('-', '');
     for (var page = 0; page < pages; page++) {
       _requireReady();
       final start = page * pageSize;
-      final end = (start + pageSize).clamp(0, local.length);
+      final end = (start + pageSize).clamp(0, local.length).toInt();
       final items = [
         for (final song in local.sublist(start, end))
           {
