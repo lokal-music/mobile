@@ -388,21 +388,40 @@ class DuplicateCleanerService {
         (loser.folderUri ?? '').startsWith('content://');
 
     if (hasSafOrContent) {
+      final hasFolderGrant =
+          (loser.folderUri ?? '').startsWith('content://');
+      // When a SAF tree grant is available, pass the real filesystem path so
+      // Android can resolve it to a child document under that tree. Passing a
+      // MediaStore content URI here bypasses the tree and was being sent to
+      // DocumentsContract.deleteDocument(), which does not accept MediaStore
+      // item URIs.
       final targetUri = path.startsWith('content://')
           ? path
-          : (loser.mediaStoreUri != null &&
-                    loser.mediaStoreUri!.startsWith('content://')
-                ? loser.mediaStoreUri!
-                : path);
-      final treeUri =
-          (loser.folderUri != null && loser.folderUri!.isNotEmpty)
-          ? loser.folderUri!
-          : targetUri;
+          : (hasFolderGrant
+                ? path
+                : ((loser.mediaStoreUri ?? '').startsWith('content://')
+                      ? loser.mediaStoreUri!
+                      : path));
+      final treeUri = hasFolderGrant ? loser.folderUri! : targetUri;
 
       deleted = await MusicFolderService.deleteDocument(
         folderTreeUri: treeUri,
         filePath: targetUri,
       );
+
+      // If the SAF tree operation failed, try the MediaStore item URI itself.
+      // Android handles that URI through ContentResolver.delete(), which
+      // deletes the media item rather than treating it as a document URI.
+      final mediaStoreUri = loser.mediaStoreUri;
+      if (!deleted &&
+          hasFolderGrant &&
+          mediaStoreUri != null &&
+          mediaStoreUri.startsWith('content://')) {
+        deleted = await MusicFolderService.deleteDocument(
+          folderTreeUri: mediaStoreUri,
+          filePath: mediaStoreUri,
+        );
+      }
     }
 
     if (!path.startsWith('content://')) {
