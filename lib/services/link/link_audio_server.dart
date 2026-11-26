@@ -28,6 +28,7 @@ class LinkAudioServer {
     final token = List<int>.generate(24, (_) => _random.nextInt(256))
         .map((value) => value.toRadixString(16).padLeft(2, '0')).join();
     _files[token] = path;
+    while (_files.length > 32) _files.remove(_files.keys.first);
     return 'http://$ip:${server.port}/$token';
   }
 
