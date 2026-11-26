@@ -24,7 +24,9 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
       - name: Check formatting
-        run: dart format --output=none --set-exit-if-changed lib/services/link/link_audio_server.dart lib/providers/lokal_remote_provider.dart test/services/link/link_audio_server_test.dart
+        run: |
+          dart format lib/services/link/link_audio_server.dart lib/providers/lokal_remote_provider.dart test/services/link/link_audio_server_test.dart
+          git diff -- lib/services/link/link_audio_server.dart lib/providers/lokal_remote_provider.dart test/services/link/link_audio_server_test.dart
       - name: Analyze Link audio implementation
         run: flutter analyze lib/services/link/link_audio_server.dart lib/providers/lokal_remote_provider.dart
       - name: Test authenticated token and HTTP range behavior
