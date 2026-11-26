@@ -6,7 +6,7 @@ import '../services/favorites_service.dart';
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show WebSocketException;
+import 'dart:io' show File, WebSocketException;
 import 'dart:typed_data';
 
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
@@ -1324,10 +1324,12 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
       Object? commandResult;
       await runIncomingPhoneCommand(
         isCurrent: isCurrent,
-        handle: () async => commandResult = await _handlePhoneCommand(
-          body,
-          connectionGeneration: connectionGeneration,
-        ),
+        handle: () async {
+          commandResult = await _handlePhoneCommand(
+            body,
+            connectionGeneration: connectionGeneration,
+          );
+        },
         acknowledgeSuccess: () async {
           if (body['action'] == 'copyTracksToPhone') {
             final message = state.transferMessage;
@@ -1544,7 +1546,10 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
           throw const LokalRemoteProtocolException('Keep Lokal open in the foreground to stream phone music.');
         }
         final tracks = await SongRepository().getAllSongs();
-        final requested = tracks.where((song) => song.id == value['trackId']).firstOrNull;
+        Song? requested;
+        for (final song in tracks) {
+          if (song.id == value['trackId']) { requested = song; break; }
+        }
         final path = requested?.filePath;
         if (requested == null || path == null || path.isEmpty || requested.isNetworkSource || requested.isExternal) {
           throw const LokalRemoteProtocolException('This phone song is no longer available locally.');
