@@ -139,7 +139,7 @@ List<LokalSettingsSection> dataSettings(
       LokalSettingLink(
         label: lokalText('Desktop link'),
         description: lokalText(
-          'Pair, merge libraries and copy music files over Wi-Fi.',
+          'Sync your library and copy missing music files between devices.',
         ),
         onTap: () => unawaited(
           Navigator.of(context).push(
