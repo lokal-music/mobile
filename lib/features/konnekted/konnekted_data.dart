@@ -245,10 +245,49 @@ List<AlbumGroup> konnektedCoversWithLocalAlbums(
 /// Home's Cover Flow remains one cover per recommended song. Its back shows
 /// all matching *local* album tracks; tapping a face still plays the selected
 /// recommendation with the same Made for You shelf as the queue.
+/// Build a lightweight local-album shelf while the personalized mix
+/// history is loading. This keeps Home's first-open carousel populated as soon
+/// as the local library snapshot is available, then swaps to personalized picks.
+List<AlbumGroup> _localCoverFlowFallback(List<Song> songs) {
+  final groups = <String, List<Song>>{};
+  final labels = <String, ({String album, String artist})>{};
+  for (final song in songs) {
+    final album = song.album?.trim() ?? '';
+    if (album.isEmpty) continue;
+    final artist = (song.albumArtist?.trim().isNotEmpty == true
+        ? song.albumArtist!.trim()
+        : song.artist.trim());
+    final key = '${album.toLowerCase()}|\u0000${artist.toLowerCase()}';
+    (groups[key] ??= <Song>[]).add(song);
+    labels[key] = (album: album, artist: artist);
+  }
+  final result = <AlbumGroup>[];
+  for (final entry in groups.entries) {
+    final tracks = SongRepository.sortAlbumTracks(entry.value);
+    final cover = tracks.firstWhere(
+      (song) => song.albumArt?.isNotEmpty == true,
+      orElse: () => tracks.first,
+    );
+    final label = labels[entry.key]!;
+    result.add(AlbumGroup(
+      key: 'local:${entry.key}',
+      albumName: label.album,
+      albumArtist: label.artist,
+      songs: tracks,
+      coverSong: cover,
+    ));
+    if (result.length == 12) break;
+  }
+  return result;
+}
+
 final konnektedCoverAlbumsProvider = Provider<AsyncValue<List<AlbumGroup>>>(
   (ref) {
     final picks = ref.watch(konnektedMadeForYouProvider);
     final local = ref.watch(konnektedLibraryProvider).value ?? const <Song>[];
+    if (!picks.hasValue && local.isNotEmpty) {
+      return AsyncData(_localCoverFlowFallback(local));
+    }
     return _homeData(picks, (entries) =>
         konnektedCoversWithLocalAlbums(entries, local));
   },
