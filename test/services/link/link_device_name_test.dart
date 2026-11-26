@@ -111,14 +111,20 @@ void main() {
         await service.connect(credentials);
         final first = await received.future.timeout(const Duration(seconds: 3));
         expect(first.type, 'hello');
-        expect(first.body, {'deviceName': 'Pixel Tablet'});
+        expect(first.body, {
+          'capabilities': ['track_lifecycle'],
+          'deviceName': 'Pixel Tablet',
+        });
         await service.disconnect();
         name = 'Kitchen tablet';
         received = Completer<LinkMessage>();
         await service.connect(credentials);
         expect(
           (await received.future.timeout(const Duration(seconds: 3))).body,
-          {'deviceName': 'Kitchen tablet'},
+          {
+            'capabilities': ['track_lifecycle'],
+            'deviceName': 'Kitchen tablet',
+          },
         );
       } finally {
         await service.close();
@@ -167,7 +173,8 @@ void main() {
             ),
           );
           expect((await service.request('queue', {})).body['ok'], isTrue);
-          expect(types, ['queue']);
+          expect(types.where((type) => type != 'hello'), ['queue']);
+          expect(types.first, 'hello');
         } finally {
           await service.close();
           for (final socket in sockets) {
