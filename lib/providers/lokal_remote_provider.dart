@@ -199,6 +199,7 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
     });
     ref.onDispose(() {
       _copyPlanner?.cancel();
+      unawaited(LinkAudioServer.instance.close());
       _syncNotification.dispose();
       _copyNotification.dispose();
       _disposed = true;
@@ -395,6 +396,7 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
     _linkTimer?.cancel();
     _statsDebounce?.cancel();
     _linkSync = null;
+    unawaited(LinkAudioServer.instance.close());
     unawaited(ref.read(lokalLinkServiceProvider).disconnect());
     NotificationService().release(_notificationOwner);
     _generation++;
