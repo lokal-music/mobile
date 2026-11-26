@@ -368,6 +368,10 @@ class DuplicateCleanerService {
   }
 
   /// Default physical file deletion helper for Android/iOS/desktop local files.
+  ///
+  /// This must fail closed: callers delete the library row only after this
+  /// method completes. Silently swallowing a SAF/MediaStore failure leaves the
+  /// audio file on disk, so the next scan imports it again as a "new" track.
   static Future<void> defaultDeletePhysicalFile(SongEntity loser) async {
     final path = loser.filePath.trim();
     if (path.isEmpty ||
@@ -394,31 +398,43 @@ class DuplicateCleanerService {
           (loser.folderUri != null && loser.folderUri!.isNotEmpty)
           ? loser.folderUri!
           : targetUri;
-      try {
-        deleted = await MusicFolderService.deleteDocument(
-          folderTreeUri: treeUri,
-          filePath: targetUri,
-        );
-      } catch (_) {}
+
+      deleted = await MusicFolderService.deleteDocument(
+        folderTreeUri: treeUri,
+        filePath: targetUri,
+      );
+      // MediaStore deletion is a fallback for providers that reject the
+      // SAF tree operation. A failed native call must not be treated as success.
+      if (!deleted) {
+        deleted = await MusicFolderService.removeFromMediaStore(targetUri);
+      }
     }
 
     if (!path.startsWith('content://')) {
       final resolved = path.startsWith('file://')
           ? (Uri.tryParse(path)?.toFilePath() ?? path)
           : path;
-      try {
-        final file = File(resolved);
+      final file = File(resolved);
+      if (await file.exists()) {
+        await file.delete();
         if (await file.exists()) {
-          await file.delete();
-          deleted = true;
+          throw FileSystemException(
+            'Duplicate audio file still exists after deletion',
+            resolved,
+          );
         }
-      } catch (_) {}
+        deleted = true;
+      } else if (!hasSafOrContent) {
+        // Already absent is a successful deletion; there is nothing to rescan.
+        deleted = true;
+      }
     }
 
-    if (deleted || !path.startsWith('content://')) {
-      try {
-        await MusicFolderService.removeFromMediaStore(path);
-      } catch (_) {}
+    if (!deleted) {
+      throw FileSystemException(
+        'Could not delete duplicate audio file from device storage',
+        path,
+      );
     }
   }
 
