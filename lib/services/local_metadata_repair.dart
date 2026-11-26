@@ -16,6 +16,7 @@ import '../models/song.dart';
 import '../src/rust/api/scanner.dart';
 import 'music_folder_service.dart';
 import 'background_metadata_budget.dart';
+import '../core/utils/library_metadata_placeholders.dart';
 import '../core/utils/dev_log.dart';
 import '../core/utils/app_log.dart';
 

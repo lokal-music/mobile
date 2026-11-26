@@ -5,6 +5,7 @@ import '../../models/song.dart';
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:isar_community/isar.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -13,15 +14,19 @@ import '../../data/repositories/recently_played_repository.dart';
 import '../../data/repositories/song_repository.dart';
 import '../../models/lokal_remote_state.dart';
 import '../../models/playlist.dart';
+import '../duplicate_cleaner_service.dart';
 import '../favorites_service.dart';
 import '../playlist_service.dart';
 import '../online_playlist_reference.dart';
 import 'link_journal.dart';
+import 'link_protocol.dart';
+import 'link_song_bindings.dart';
 import 'copied_track_clip.dart';
 import 'link_playlist_order.dart';
 import 'link_profile_service.dart';
 import 'lokal_desktop_source.dart';
 import 'lokal_link_service.dart';
+import 'transfer_artifact_cleaner.dart';
 
 /// Symmetric, cursor-based merge. Only explicit operations remove playlist items;
 /// a missing desktop row can never delete a phone file, like, or playlist.
@@ -34,6 +39,7 @@ class LinkSyncCoordinator {
     this.onProfileChanged,
     this.onProgress,
     this.initialProgress = const LinkSyncProgress(),
+    this.deletePhysicalFile,
   });
   final LokalLinkService socket;
   final LokalRemoteCredentials credentials;
@@ -42,6 +48,7 @@ class LinkSyncCoordinator {
   final void Function()? onProfileChanged;
   final void Function(LinkSyncProgress)? onProgress;
   final LinkSyncProgress initialProgress;
+  final Future<void> Function(SongEntity)? deletePhysicalFile;
   late LinkSyncProgress _progress = initialProgress;
   Future<void>? _active;
   bool _background = false;
@@ -370,19 +377,26 @@ class LinkSyncCoordinator {
         final cursor = prefs.getInt(pushKey) ?? 0;
         final batch = kind == 'history'
             ? await LinkJournal.instance.historyAfter(cursor)
-            : await LinkJournal.instance.libraryAfter(cursor);
+            : await LinkJournal.instance.libraryAfter(
+                cursor,
+                includeTrackLifecycle: socket.supportsTrackLifecycle,
+              );
         final items = batch['items'] as List;
-        if (items.isEmpty) break;
-        await socket.request('$kind.push', {'items': items});
-        processed += items.length;
-        _report(phase, processed: processed);
-        await prefs.setInt(pushKey, batch['cursor'] as int);
+        final nextCursor = batch['cursor'] as int;
+        if (items.isNotEmpty) {
+          await socket.request('$kind.push', {'items': items});
+          processed += items.length;
+          _report(phase, processed: processed);
+        }
+        if (nextCursor == cursor) break;
+        await prefs.setInt(pushKey, nextCursor);
         if (batch['hasMore'] != true) break;
       }
       final pullKey = '$_prefix.$kind.pull';
       while (socket.connected) {
         final reply = await socket.request('$kind.pull', {
           'cursor': prefs.getInt(pullKey) ?? 0,
+          if (kind == 'library') 'trackLifecycle': true,
         });
         final items = reply.body['items'];
         if (items is! List || reply.body['cursor'] is! int) {
@@ -549,29 +563,386 @@ class LinkSyncCoordinator {
     if (reconciled) onChanged?.call();
   }
 
+  @visibleForTesting
+  Future<void> materializeLibraryPageForTesting(
+    List<Map<String, dynamic>> items,
+  ) => _materializeLibraryPage(items);
+
   Future<void> _materializeLibraryPage(List<Map<String, dynamic>> items) async {
-    final playlists = <String, Map<String, dynamic>>{};
-    final likes = <String, bool>{};
-    for (final item in items) {
-      if (item['entity'] == 'playlist') {
-        playlists[item['entity_id'] as String] = item;
-      } else if (item['entity'] == 'like') {
-        if (!await LinkJournal.instance.wins(item, 'liked')) continue;
-        final song = await _match({
-          ...Map<String, dynamic>.from(item['fields'] as Map),
-          'track_key': item['entity_id'],
-        });
-        if (song != null) likes[song.id] = item['op'] == 'like';
-      } else {
+    final prevApplying = LinkJournal.instance.applyingRemote;
+    LinkJournal.instance.applyingRemote = true;
+    try {
+      final playlists = <String, Map<String, dynamic>>{};
+      final likes = <String, bool>{};
+      for (final item in items) {
+        if (item['entity'] == 'playlist') {
+          playlists[item['entity_id'] as String] = item;
+        } else if (item['entity'] == 'like') {
+          if (!await LinkJournal.instance.wins(item, 'liked')) continue;
+          final song = await _match({
+            ...Map<String, dynamic>.from(item['fields'] as Map),
+            'track_key': item['entity_id'],
+          });
+          if (song != null) likes[song.id] = item['op'] == 'like';
+        } else {
+          await _materialize(item);
+        }
+      }
+      if (likes.isNotEmpty) await favorites.setManyFromLink(likes);
+      // mergeLibrary has already persisted every operation in this page. One
+      // replay per playlist produces the same state as replaying it per member.
+      for (final item in playlists.values) {
         await _materialize(item);
       }
+    } finally {
+      LinkJournal.instance.applyingRemote = prevApplying;
     }
-    if (likes.isNotEmpty) await favorites.setManyFromLink(likes);
-    // mergeLibrary has already persisted every operation in this page. One
-    // replay per playlist produces the same state as replaying it per member.
-    for (final item in playlists.values) {
-      await _materialize(item);
+  }
+
+  Future<void> _applyTrackDeduplicate(
+    Map<String, dynamic> item,
+    Map<String, dynamic> fields,
+  ) async {
+    final journal = LinkJournal.instance;
+    final keepKey =
+        fields['keep_key']?.toString().trim() ??
+        item['entity_id']?.toString().trim() ??
+        '';
+    final rawRemoved = fields['removed_keys'];
+    final removedKeys = <String>[
+      if (rawRemoved is List)
+        for (final entry in rawRemoved.take(200))
+          if (entry != null && entry.toString().trim().isNotEmpty)
+            entry.toString().trim(),
+    ];
+    if (keepKey.isNotEmpty && removedKeys.isNotEmpty) {
+      await journal.registerKeyRedirects(removedKeys, keepKey);
     }
+
+    await LinkSongBindings.instance.ensureLoaded();
+    final keepHash = fields['keep_hash']?.toString().trim().toLowerCase() ?? '';
+    final rawHashes = fields['removed_hashes'];
+    final hashSet = <String>{
+      if (RegExp(r'^[0-9a-f]{64}$').hasMatch(keepHash)) keepHash,
+      if (rawHashes is List)
+        for (final entry in rawHashes.take(200))
+          if (entry is Map)
+            if (RegExp(
+              r'^[0-9a-f]{64}$',
+            ).hasMatch(entry['sha256']?.toString().trim().toLowerCase() ?? ''))
+              entry['sha256'].toString().trim().toLowerCase(),
+    };
+
+    final allKeys = <String>{
+      if (keepKey.isNotEmpty) keepKey,
+      ...removedKeys,
+    };
+
+    final probeTitle = fields['title']?.toString() ?? '';
+    final probeArtist = fields['artist']?.toString() ?? '';
+    final probeDurationSec = (fields['duration'] as num?)?.toDouble() ?? 0;
+    final probeIdentity = canonicalDuplicateIdentity(
+      title: probeTitle,
+      artist: probeArtist,
+    );
+
+    final repo = SongRepository();
+    final allEntities = await repo.getAllSongEntities();
+    final matchedLocal = <int, SongEntity>{};
+
+    for (final entity in allEntities) {
+      if (!isLocalDuplicateCandidate(entity)) continue;
+      final songIdStr = entity.id.toString();
+      final binding = LinkSongBindings.instance.peek(
+        songIdStr,
+        filePath: entity.filePath,
+      );
+      if (binding?.sha256 != null && hashSet.contains(binding!.sha256)) {
+        matchedLocal[entity.id] = entity;
+        continue;
+      }
+
+      final songModel = repo.songFromEntity(entity);
+      final songTrackKey = await journal.trackKeyFor(songModel);
+      final rawSongKey = linkTrackKey(
+        entity.artist,
+        entity.title,
+        Duration(milliseconds: entity.durationMs ?? 0),
+      );
+      final cleanMeta = cleanTransferMetadata(
+        title: entity.title,
+        artist: entity.artist,
+      );
+      final cleanSongKey = linkTrackKey(
+        cleanMeta.artist,
+        cleanMeta.title,
+        Duration(milliseconds: entity.durationMs ?? 0),
+      );
+      if (allKeys.contains(songTrackKey) ||
+          allKeys.contains(rawSongKey) ||
+          allKeys.contains(cleanSongKey)) {
+        matchedLocal[entity.id] = entity;
+        continue;
+      }
+
+      if (probeIdentity.titleKey.isNotEmpty) {
+        final candIdentity = canonicalDuplicateIdentity(
+          title: entity.title,
+          artist: entity.artist,
+        );
+        if (candIdentity.titleKey == probeIdentity.titleKey &&
+            candIdentity.artistKey == probeIdentity.artistKey) {
+          final candSec = (entity.durationMs ?? 0) / 1000.0;
+          if (probeDurationSec <= 0 ||
+              candSec <= 0 ||
+              (candSec - probeDurationSec).abs() <= 4.0) {
+            matchedLocal[entity.id] = entity;
+          }
+        }
+      }
+    }
+
+    if (matchedLocal.isEmpty) return;
+
+    final candidates = matchedLocal.values.toList();
+    if (candidates.length == 1) {
+      // NEVER delete the sole local copy — only teach its canonical alias and
+      // clean transfer artifacts on its metadata if needed.
+      final sole = candidates.single;
+      if (keepKey.isNotEmpty) {
+        await journal.registerTrackAlias(
+          sole.id.toString(),
+          keepKey,
+          overwrite: true,
+        );
+      }
+      final cleaned = cleanTransferMetadata(
+        title: sole.title,
+        artist: sole.artist,
+      );
+      if (cleaned.changed) {
+        await Database.instance.writeTxn(() async {
+          final current = await Database.songs.get(sole.id);
+          if (current == null) return;
+          current.title = cleaned.title;
+          current.artist = cleaned.artist;
+          await Database.songs.put(current);
+        });
+      }
+      _matchCandidates = null;
+      _matchCache.clear();
+      return;
+    }
+
+    // >= 2 local copies exist: merge them via DuplicateCleanerService
+    // (emitJournal: false) keeping the 1 best-quality local copy and deleting
+    // redundant duplicate file(s)!
+    final playCountMap = await RecentlyPlayedRepository().getPlayCounts();
+    final groupPlayCounts = <int, int>{
+      for (final c in candidates)
+        c.id: playCountMap[c.id.toString()] ?? 0,
+    };
+    final group = DuplicateGroup(
+      key: keepKey.isNotEmpty ? keepKey : 'remote_dedup',
+      songs: candidates,
+      playCounts: groupPlayCounts,
+    );
+    final cleaner = DuplicateCleanerService(
+      songRepository: repo,
+      favoritesService: favorites,
+      playlistService: PlaylistService.instance,
+      deletePhysicalFile: deletePhysicalFile,
+      emitJournal: false,
+    );
+    final keeperId = group.recommendedKeep.id;
+    await cleaner.mergeAndRemoveGroup(
+      group,
+      keepId: keeperId,
+      emitJournal: false,
+    );
+    if (keepKey.isNotEmpty) {
+      await journal.registerTrackAlias(
+        keeperId.toString(),
+        keepKey,
+        overwrite: true,
+      );
+    }
+    _matchCandidates = null;
+    _matchCache.clear();
+  }
+
+  Future<void> _applyTrackDelete(
+    Map<String, dynamic> item,
+    Map<String, dynamic> fields,
+  ) async {
+    final journal = LinkJournal.instance;
+    if (!await journal.wins(item, 'deleted')) return;
+
+    final hlcStr = item['hlc']?.toString() ?? '';
+    final hlcMs = int.tryParse(hlcStr.split(':').first) ?? 0;
+    final limitMs = hlcMs + 5000;
+
+    final key =
+        fields['track_key']?.toString().trim() ??
+        item['entity_id']?.toString().trim() ??
+        '';
+    final rawKey = fields['raw_track_key']?.toString().trim() ?? '';
+    final fileHash = fields['file_hash']?.toString().trim().toLowerCase() ?? '';
+    final targetKeys = <String>{
+      if (key.isNotEmpty) key,
+      if (rawKey.isNotEmpty) rawKey,
+      if (item['entity_id'] != null &&
+          item['entity_id'].toString().trim().isNotEmpty)
+        item['entity_id'].toString().trim(),
+    };
+
+    final parts = key.split('|');
+    final parsedDur = parts.isNotEmpty
+        ? double.tryParse(parts.removeLast()) ?? 0
+        : 0;
+    final parsedTitle = parts.isNotEmpty ? parts.removeLast() : '';
+    final parsedArtist = parts.join('|');
+
+    final probeTitle = fields['title']?.toString().trim().isNotEmpty == true
+        ? fields['title'].toString().trim()
+        : parsedTitle;
+    final probeArtist = fields['artist']?.toString().trim().isNotEmpty == true
+        ? fields['artist'].toString().trim()
+        : parsedArtist;
+    final probeDurSec = (fields['duration'] as num?)?.toDouble() ?? parsedDur;
+    final probeIdentity = canonicalDuplicateIdentity(
+      title: probeTitle,
+      artist: probeArtist,
+    );
+
+    await LinkSongBindings.instance.ensureLoaded();
+    final repo = SongRepository();
+    final allEntities = await repo.getAllSongEntities();
+
+    final remoteStreamVictimIds = <int>[];
+    final localVictims = <SongEntity>[];
+
+    for (final entity in allEntities) {
+      final songIdStr = entity.id.toString();
+      final binding = LinkSongBindings.instance.peek(
+        songIdStr,
+        filePath: entity.filePath,
+      );
+      var matched = false;
+      if (fileHash.isNotEmpty &&
+          RegExp(r'^[0-9a-f]{64}$').hasMatch(fileHash) &&
+          binding?.sha256 == fileHash) {
+        matched = true;
+      }
+      if (!matched) {
+        final songModel = repo.songFromEntity(entity);
+        final alias = await journal.trackKeyFor(songModel);
+        final entityRawKey = linkTrackKey(
+          entity.artist,
+          entity.title,
+          Duration(milliseconds: entity.durationMs ?? 0),
+        );
+        final cleanMeta = cleanTransferMetadata(
+          title: entity.title,
+          artist: entity.artist,
+        );
+        final entityCleanKey = linkTrackKey(
+          cleanMeta.artist,
+          cleanMeta.title,
+          Duration(milliseconds: entity.durationMs ?? 0),
+        );
+        if (targetKeys.contains(alias) ||
+            targetKeys.contains(entityRawKey) ||
+            targetKeys.contains(entityCleanKey)) {
+          matched = true;
+        }
+      }
+      if (!matched && probeIdentity.titleKey.isNotEmpty) {
+        final candIdentity = canonicalDuplicateIdentity(
+          title: entity.title,
+          artist: entity.artist,
+        );
+        if (candIdentity.titleKey == probeIdentity.titleKey &&
+            candIdentity.artistKey == probeIdentity.artistKey) {
+          final candSec = (entity.durationMs ?? 0) / 1000.0;
+          if (probeDurSec <= 0 ||
+              candSec <= 0 ||
+              (candSec - probeDurSec).abs() <= 2.0) {
+            matched = true;
+          }
+        }
+      }
+      if (!matched) continue;
+
+      if (entity.sourceType == 'lokal' ||
+          entity.filePath.startsWith('ghost://desktop/') ||
+          entity.filePath.startsWith('lokal://')) {
+        remoteStreamVictimIds.add(entity.id);
+      } else if (isLocalDuplicateCandidate(entity)) {
+        if (entity.dateAdded.millisecondsSinceEpoch <= limitMs) {
+          localVictims.add(entity);
+        }
+      }
+    }
+
+    if (remoteStreamVictimIds.isEmpty && localVictims.isEmpty) return;
+
+    final allRemovedIds = <int>{
+      ...remoteStreamVictimIds,
+      for (final v in localVictims) v.id,
+    };
+    final allRemovedStrs = allRemovedIds.map((id) => id.toString()).toSet();
+
+    // Remove from FavoritesService, PlaylistService, LinkSongBindings
+    final likedIds = await favorites.getFavoriteIds();
+    final favChanges = <String, bool>{
+      for (final idStr in allRemovedStrs)
+        if (likedIds.contains(idStr)) idStr: false,
+    };
+    if (favChanges.isNotEmpty) {
+      await favorites.setManyFromLink(favChanges);
+    }
+
+    final playlists = PlaylistService.instance;
+    for (final pl in await playlists.getPlaylists()) {
+      if (pl.isNetworkSource) continue;
+      if (!pl.songIds.any(allRemovedStrs.contains)) continue;
+      await playlists.putFromLink(
+        pl.copyWith(
+          songIds: pl.songIds
+              .where((id) => !allRemovedStrs.contains(id))
+              .toList(),
+          songAddedAt: Map.of(pl.songAddedAt)
+            ..removeWhere((k, _) => allRemovedStrs.contains(k)),
+          songSnapshots: Map.of(pl.songSnapshots)
+            ..removeWhere((k, _) => allRemovedStrs.contains(k)),
+          updatedAt: DateTime.now(),
+        ),
+      );
+    }
+
+    for (final idStr in allRemovedStrs) {
+      await LinkSongBindings.instance.removeSong(idStr);
+    }
+
+    final deleter =
+        deletePhysicalFile ?? DuplicateCleanerService.defaultDeletePhysicalFile;
+    for (final victim in localVictims) {
+      final sharing = await Database.songs
+          .where()
+          .filePathEqualToAnyStartOffsetMs(victim.filePath)
+          .findAll();
+      final sharedWithSurvivor = sharing.any(
+        (row) => !allRemovedIds.contains(row.id),
+      );
+      if (!sharedWithSurvivor) {
+        await deleter(victim);
+      }
+    }
+
+    await repo.deleteSongsByIds(allRemovedIds.toList());
+    _matchCandidates = null;
+    _matchCache.clear();
   }
 
   Future<void> _materialize(Map<String, dynamic> item) async {
@@ -716,6 +1087,15 @@ class LinkSyncCoordinator {
         );
         break;
       case 'track':
+        final op = item['op']?.toString() ?? 'track.edit';
+        if (op == 'track.deduplicate') {
+          await _applyTrackDeduplicate(item, fields);
+          break;
+        }
+        if (op == 'track.delete') {
+          await _applyTrackDelete(item, fields);
+          break;
+        }
         const editable = [
           'title',
           'artist',

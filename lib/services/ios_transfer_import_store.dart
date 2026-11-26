@@ -1,6 +1,8 @@
 import 'ios_transfer_song_identity.dart';
+import 'link/transfer_artifact_cleaner.dart';
 
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:isar_community/isar.dart';
 import 'package:path/path.dart' as p;
@@ -11,6 +13,7 @@ import '../data/entities/song_entity.dart';
 import '../models/ios_transfer_import.dart';
 import '../models/ios_transfer_models.dart';
 import '../models/ios_transfer_orphan.dart';
+import '../src/rust/api/scanner.dart' show extractFileMetadata;
 
 enum IosTransferImportConflict {
   pairingChanged,
@@ -472,6 +475,20 @@ class IosTransferImportStore {
     if (job.phase != IosTransferPhase.importing) {
       _fail(IosTransferImportConflict.retired);
     }
+    final targetPath = absolutePath(copy);
+    var isUntagged = true;
+    try {
+      final probed = await extractFileMetadata(path: targetPath);
+      if (probed != null &&
+          (probed.title?.trim().isNotEmpty ?? false) &&
+          !hasTransferArtifact(probed.title!) &&
+          (probed.artist?.trim().isNotEmpty ?? false) &&
+          !isPlaceholderTransferArtist(probed.artist)) {
+        isUntagged = false;
+      }
+    } catch (_) {
+      isUntagged = true;
+    }
     final result = await isar.writeTxn(() async {
       _current(isCurrent);
       final receipt = await isar.iosTransferReceiptEntitys.getByOperationKey(
@@ -499,7 +516,7 @@ class IosTransferImportStore {
       if (song.sourceType != 'lokal') {
         _fail(IosTransferImportConflict.destinationConflict);
       }
-      final path = absolutePath(copy);
+      final path = targetPath;
       final slot = await isar.songEntitys.getByFilePathStartOffsetMs(
         path,
         song.startOffsetMs,
@@ -509,13 +526,32 @@ class IosTransferImportStore {
       }
       await validateOwnership();
       _current(isCurrent);
+      FileStat? stat;
+      try {
+        final s = File(path).statSync();
+        if (s.type != FileSystemEntityType.notFound && s.size >= 0) {
+          stat = s;
+        }
+      } on FileSystemException {
+        stat = null;
+      }
+      final cleaned = cleanTransferMetadata(
+        title: song.title,
+        artist: song.artist,
+      );
+      if (hasTransferArtifact(song.title) ||
+          (isPlaceholderTransferArtist(song.artist) && cleaned.changed)) {
+        song
+          ..title = cleaned.title
+          ..artist = cleaned.artist;
+      }
       song
         ..filePath = path
         ..folderUri = musicRoot
         ..relativeFolderPath = 'Desktop Copies'
         ..mediaStoreUri = null
         ..sourceType = null
-        ..fileSize = copy.bytes
+        ..fileSize = stat != null ? stat.size : copy.bytes
         ..fileType =
             media.format ??
             media.codec ??
@@ -525,7 +561,10 @@ class IosTransferImportStore {
         ..bitrate = media.bitrate
         ..channels = media.channels
         ..metadataComplete = true
-        ..lastModified = _now();
+        ..lastModified = stat?.modified ?? _now();
+      if (isUntagged) {
+        song.hasLocalEdits = true;
+      }
       // Existing CUE ranges and current descriptive/user metadata retain their identity.
       if (song.startOffsetMs == null) {
         song.durationMs = media.durationMs ?? song.durationMs;

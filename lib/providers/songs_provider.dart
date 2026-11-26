@@ -3,11 +3,14 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../core/utils/artist_credits.dart';
 import '../core/utils/string_sort_utils.dart';
 import '../core/utils/uri_display_utils.dart';
 import '../models/song.dart';
 import '../data/repositories/song_repository.dart';
 import '../features/search/providers/local_device_search.dart';
+import '../services/link/library_song_identity.dart';
+import '../services/link/transfer_artifact_repair.dart';
 
 import 'package:flick/l10n/l10n.dart';
 
@@ -635,7 +638,8 @@ class SongsNotifier extends AsyncNotifier<SongsState> {
     if (!_sortChanged) _sortOption = savedSort;
     if (!_fileTypeChanged) _fileTypeFilter = savedFilter;
 
-    final songs = await repository.getAllSongs();
+    await TransferArtifactRepairService.instance.repairIfNeeded();
+    final songs = preferLocalLibrarySongs(await repository.getAllSongs());
     return SongsState(
       songs: songs,
       sortOption: _sortOption,
@@ -730,7 +734,13 @@ final songsByAlbumProvider = FutureProvider.autoDispose<List<AlbumGroup>>((
 ) async {
   ref.watch(libraryChangeRevisionProvider);
   final repository = ref.watch(songRepositoryProvider);
-  return repository.getAlbumGroups();
+  await TransferArtifactRepairService.instance.repairIfNeeded();
+  final songs = preferLocalLibrarySongs(await repository.getAllSongs());
+  return SongsState._computeAlbumGroups(
+    songs,
+    SongSortOption.album,
+    SongFileTypeFilter.all,
+  );
 });
 
 /// Songs grouped by artist.
@@ -738,7 +748,20 @@ final songsByArtistProvider =
     FutureProvider.autoDispose<Map<String, List<Song>>>((ref) async {
       ref.watch(libraryChangeRevisionProvider);
       final repository = ref.watch(songRepositoryProvider);
-      return repository.getSongsByArtist();
+      await TransferArtifactRepairService.instance.repairIfNeeded();
+      final songs = preferLocalLibrarySongs(await repository.getAllSongs());
+      final artistMap = <String, List<Song>>{};
+      final names = <String, String>{};
+      for (final song in songs) {
+        for (final name in songArtistNames(song)) {
+          final key = names.putIfAbsent(name.toLowerCase(), () => name);
+          artistMap.putIfAbsent(key, () => []).add(song);
+        }
+      }
+      for (final entry in artistMap.entries) {
+        artistMap[entry.key] = SongRepository.sortSongsByAlbum(entry.value);
+      }
+      return artistMap;
     });
 
 // ============================================================================

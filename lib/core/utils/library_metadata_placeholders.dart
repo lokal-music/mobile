@@ -11,5 +11,23 @@ final _unknownAlbums = {
   for (final locale in kSupportedLocales)
     lookupAppLocalizations(locale).unknownAlbum,
 };
-bool isUnknownLibraryArtist(String? value) => _unknownArtists.contains(value);
+const _extraUnknownArtists = {
+  '<unknown>',
+  'unknown artist',
+  'unknown',
+  'lokal phone',
+  'lokal mobile',
+  'phone-downloads',
+};
+
+bool isUnknownLibraryArtist(String? value) {
+  if (value == null) return false;
+  if (_unknownArtists.contains(value)) return true;
+  final normalized = value.trim().toLowerCase();
+  if (_extraUnknownArtists.contains(normalized)) return true;
+  return _unknownArtists.any(
+    (entry) => entry.trim().toLowerCase() == normalized,
+  );
+}
+
 bool isUnknownLibraryAlbum(String? value) => _unknownAlbums.contains(value);

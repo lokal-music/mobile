@@ -68,6 +68,7 @@ final lokalDesktopStreamingAvailableProvider = FutureProvider.autoDispose
         ),
       );
       final credentialsStore = ref.read(lokalRemoteCredentialsStoreProvider);
+      final pairedStore = ref.read(lokalPairedDesktopsStoreProvider);
       final service = ref.read(lokalRemoteServiceProvider);
       final lease = ref.keepAlive();
       Timer? expiry;
@@ -77,22 +78,70 @@ final lokalDesktopStreamingAvailableProvider = FutureProvider.autoDispose
         expiry?.cancel();
       });
       try {
-        final credentials = await credentialsStore.read();
         final server = await Database.networkServers.get(serverId);
-        if (server == null ||
-            credentials == null ||
-            !desktopStreamingCredentialsMatch(
-              storedUsername: server.username ?? '',
-              storedBaseUrl: server.baseUrl,
-              desktopId: credentials.desktopId,
-              desktopUserId: credentials.desktopUserId,
-              credentialOrigin: credentials.origin.toString(),
+        if (server == null) return false;
+        var credentials = await credentialsStore.read();
+        bool matches(
+          String? desktopId,
+          String? desktopUserId,
+          String? origin,
+        ) => desktopStreamingCredentialsMatch(
+          storedUsername: server.username ?? '',
+          storedBaseUrl: server.baseUrl,
+          desktopId: desktopId,
+          desktopUserId: desktopUserId,
+          credentialOrigin: origin,
+        );
+        if (credentials == null ||
+            !matches(
+              credentials.desktopId,
+              credentials.desktopUserId,
+              credentials.origin.toString(),
             )) {
-          return false;
+          final legacyActive = credentials;
+          credentials = null;
+          try {
+            final paired = await pairedStore.readAll(
+              legacyActive: legacyActive,
+            );
+            for (final entry in paired) {
+              final candidate = entry.credentials;
+              if (matches(
+                candidate.desktopId,
+                candidate.desktopUserId,
+                candidate.origin.toString(),
+              )) {
+                credentials = candidate;
+                break;
+              }
+            }
+            if (credentials == null) {
+              for (final entry in paired) {
+                final candidate = entry.credentials;
+                if (candidate.desktopId != null &&
+                    server.username ==
+                        '${candidate.desktopId}:${candidate.desktopUserId ?? 'guest'}' &&
+                    desktopStreamingCredentialsMatch(
+                      storedUsername: server.username ?? '',
+                      storedBaseUrl: candidate.origin.toString(),
+                      desktopId: candidate.desktopId,
+                      desktopUserId: candidate.desktopUserId,
+                      credentialOrigin: candidate.origin.toString(),
+                    )) {
+                  credentials = candidate;
+                  break;
+                }
+              }
+            }
+          } on Object {
+            credentials = null;
+          }
         }
+        if (credentials == null) return false;
 
+        final resolved = credentials;
         return await desktopHttpReachable(() async {
-          await service.fetchState(credentials);
+          await service.fetchState(resolved);
         });
       } catch (_) {
         return false;

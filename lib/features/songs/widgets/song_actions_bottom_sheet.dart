@@ -20,10 +20,18 @@ import 'package:flick/features/songs/widgets/album_art_picker_bottom_sheet.dart'
 import 'package:flick/features/songs/widgets/metadata_editor_bottom_sheet.dart';
 import 'package:flick/models/song.dart';
 import 'package:flick/features/konnekted/library/replayable_stream_songs.dart';
+import 'package:flick/data/repositories/song_repository.dart';
+import 'package:flick/features/discovery/recommendation_match.dart';
 import 'package:flick/providers/opt_in_source_provider.dart';
 import 'package:flick/providers/providers.dart';
+import 'package:flick/services/favorites_service.dart';
+import 'package:flick/services/link/link_journal.dart';
+import 'package:flick/services/link/link_protocol.dart';
+import 'package:flick/services/link/link_song_bindings.dart';
+import 'package:flick/services/link/transfer_artifact_cleaner.dart';
 import 'package:flick/services/music_folder_service.dart';
 import 'package:flick/services/player_service.dart';
+import 'package:flick/services/playlist_service.dart';
 import 'package:flick/widgets/lokal/settings/lokal_settings_surfaces.dart';
 import 'package:flick/widgets/common/ios_transfer_root.dart';
 import 'package:flutter/material.dart';
@@ -31,6 +39,235 @@ import 'package:flutter/foundation.dart'
     show ValueListenable, visibleForTesting;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:share_plus/share_plus.dart';
+
+/// Records a manual local song deletion in Link:
+/// - If another local non-network song matches the same canonical recording
+///   (cleaned artist/title + duration within 4s), merges likes, playlists, and
+///   [LinkSongBindings] into that survivor and appends `track.deduplicate`.
+/// - Otherwise removes the song from likes, playlists, and [LinkSongBindings],
+///   and appends `track.delete`.
+Future<void> recordLocalSongDeletionInLink(
+  Song deletedSong, {
+  SongRepository? songRepository,
+  FavoritesService? favoritesService,
+  PlaylistService? playlistService,
+}) async {
+  if (deletedSong.isNetworkSource || deletedSong.isExternal) return;
+  final path = deletedSong.filePath?.trim() ?? '';
+  if (path.startsWith('ghost://') ||
+      path.startsWith('pending:') ||
+      path.startsWith('lokal://')) {
+    return;
+  }
+
+  await LinkSongBindings.instance.ensureLoaded();
+  final preBinding = LinkSongBindings.instance.peek(
+    deletedSong.id,
+    filePath: deletedSong.filePath,
+  );
+  final sha = preBinding?.sha256;
+  var deletedBytes = deletedSong.fileSizeBytes ?? 0;
+  if (deletedBytes <= 0 &&
+      path.isNotEmpty &&
+      !path.startsWith('content://')) {
+    try {
+      final f = File(
+        path.startsWith('file://') ? Uri.parse(path).toFilePath() : path,
+      );
+      if (f.existsSync()) deletedBytes = f.lengthSync();
+    } catch (_) {}
+  }
+
+  final clean = cleanTransferMetadata(
+    title: deletedSong.title,
+    artist: deletedSong.artist,
+  );
+  final cleanKey = linkTrackKey(
+    clean.artist,
+    clean.title,
+    deletedSong.duration,
+  );
+  final rawKey = linkTrackKey(
+    deletedSong.artist,
+    deletedSong.title,
+    deletedSong.duration,
+  );
+  final aliasKey = await LinkJournal.instance.trackKeyFor(deletedSong);
+
+  var deletedArtistKey = recommendationKey(leadArtist(clean.artist));
+  if (deletedArtistKey.isEmpty) {
+    deletedArtistKey = recommendationKey(clean.artist);
+  }
+  var deletedTitleKey = titleKey(clean.title);
+  if (deletedTitleKey.isEmpty) {
+    deletedTitleKey = recommendationKey(clean.title);
+  }
+
+  final repo = songRepository ?? SongRepository();
+  final remaining = await repo.getAllSongs();
+
+  Song? survivor;
+  for (final candidate in remaining) {
+    if (candidate.id == deletedSong.id ||
+        candidate.isNetworkSource ||
+        candidate.isExternal) {
+      continue;
+    }
+    final candPath = candidate.filePath?.trim() ?? '';
+    if (candPath.isEmpty ||
+        candPath.startsWith('ghost://') ||
+        candPath.startsWith('pending:') ||
+        candPath.startsWith('lokal://')) {
+      continue;
+    }
+    final candClean = cleanTransferMetadata(
+      title: candidate.title,
+      artist: candidate.artist,
+    );
+    var candArtistKey = recommendationKey(leadArtist(candClean.artist));
+    if (candArtistKey.isEmpty) {
+      candArtistKey = recommendationKey(candClean.artist);
+    }
+    var candTitleKey = titleKey(candClean.title);
+    if (candTitleKey.isEmpty) {
+      candTitleKey = recommendationKey(candClean.title);
+    }
+    if (deletedTitleKey.isEmpty ||
+        candTitleKey != deletedTitleKey ||
+        candArtistKey != deletedArtistKey) {
+      continue;
+    }
+    final dA = deletedSong.duration.inMilliseconds;
+    final dB = candidate.duration.inMilliseconds;
+    if (dA > 0 && dB > 0 && (dA - dB).abs() > 4000) {
+      continue;
+    }
+    survivor = candidate;
+    break;
+  }
+
+  final favorites = favoritesService ?? FavoritesService(songRepository: repo);
+  final playlists = playlistService ?? PlaylistService.instance;
+
+  if (survivor != null) {
+    final likedIds = await favorites.getFavoriteIds();
+    if (likedIds.contains(deletedSong.id)) {
+      if (!likedIds.contains(survivor.id)) {
+        await favorites.addFavorite(survivor.id, song: survivor);
+      }
+      await favorites.removeFavorite(deletedSong.id);
+    }
+    for (final pl in await playlists.getPlaylists()) {
+      if (pl.isNetworkSource || !pl.songIds.contains(deletedSong.id)) continue;
+      final nextIds = <String>[];
+      var placedKeep = false;
+      for (final id in pl.songIds) {
+        if (id == survivor.id || id == deletedSong.id) {
+          if (!placedKeep) {
+            placedKeep = true;
+            nextIds.add(survivor.id);
+          }
+        } else {
+          nextIds.add(id);
+        }
+      }
+      await playlists.putFromLink(
+        pl.copyWith(
+          songIds: nextIds,
+          songAddedAt: {...pl.songAddedAt}..remove(deletedSong.id),
+          songSnapshots: {...pl.songSnapshots}..remove(deletedSong.id),
+          updatedAt: DateTime.now(),
+        ),
+      );
+    }
+
+    final fallbackServers = <int, String>{
+      if (survivor.remoteServerId != null &&
+          survivor.remoteId != null &&
+          survivor.remoteId!.isNotEmpty)
+        survivor.remoteServerId!: survivor.remoteId!,
+      if (deletedSong.remoteServerId != null &&
+          deletedSong.remoteId != null &&
+          deletedSong.remoteId!.isNotEmpty)
+        deletedSong.remoteServerId!: deletedSong.remoteId!,
+    };
+    await LinkSongBindings.instance.mergeInto(
+      keepSongId: survivor.id,
+      loserSongIds: [deletedSong.id],
+      keepFilePath: survivor.filePath,
+      fallbackServers: fallbackServers,
+    );
+    final keepBinding = await LinkSongBindings.instance.getBinding(
+      survivor.id,
+      filePath: survivor.filePath,
+    );
+    final keepClean = cleanTransferMetadata(
+      title: survivor.title,
+      artist: survivor.artist,
+    );
+    final keepKey = linkTrackKey(
+      keepClean.artist,
+      keepClean.title,
+      survivor.duration,
+    );
+    final removedKeys = <String>{
+      for (final k in [rawKey, cleanKey, aliasKey])
+        if (k.isNotEmpty && k != keepKey) k,
+    }.toList();
+    final removedHashes = <Map<String, dynamic>>[
+      if (sha != null &&
+          RegExp(r'^[0-9a-f]{64}$').hasMatch(sha) &&
+          deletedBytes > 0)
+        {'sha256': sha, 'bytes': deletedBytes},
+    ];
+    await LinkJournal.instance.append(
+      'track',
+      keepKey,
+      'track.deduplicate',
+      {
+        'keep_key': keepKey,
+        'keep_hash': keepBinding?.sha256 ?? '',
+        'title': keepClean.title,
+        'artist': keepClean.artist,
+        'album': survivor.album ?? '',
+        'duration': (survivor.duration.inMilliseconds / 1000).round(),
+        'removed_keys': removedKeys,
+        'removed_hashes': removedHashes,
+      },
+    );
+  } else {
+    if ((await favorites.getFavoriteIds()).contains(deletedSong.id)) {
+      await favorites.setFromLink(deletedSong.id, false);
+    }
+    for (final pl in await playlists.getPlaylists()) {
+      if (!pl.isNetworkSource && pl.songIds.contains(deletedSong.id)) {
+        await playlists.putFromLink(
+          pl.copyWith(
+            songIds: pl.songIds.where((id) => id != deletedSong.id).toList(),
+            songAddedAt: {...pl.songAddedAt}..remove(deletedSong.id),
+            songSnapshots: {...pl.songSnapshots}..remove(deletedSong.id),
+            updatedAt: DateTime.now(),
+          ),
+        );
+      }
+    }
+    await LinkSongBindings.instance.removeSong(deletedSong.id);
+    await LinkJournal.instance.append(
+      'track',
+      cleanKey,
+      'track.delete',
+      {
+        'track_key': cleanKey,
+        if (rawKey != cleanKey) 'raw_track_key': rawKey,
+        'file_hash': sha ?? '',
+        'title': clean.title,
+        'artist': clean.artist,
+        'album': deletedSong.album ?? '',
+        'duration': (deletedSong.duration.inMilliseconds / 1000).round(),
+      },
+    );
+  }
+}
 
 /// One extra row in a song's menu for an action specific to its caller,
 /// such as removing a queued song or restarting a connected USB DAC.
@@ -542,7 +779,8 @@ class SongActionsBottomSheet extends ConsumerWidget {
   }) async {
     final songId = int.tryParse(song.id);
     if (songId == null) return;
-    await container.read(songRepositoryProvider).deleteSong(songId);
+    final repo = container.read(songRepositoryProvider);
+    await repo.deleteSong(songId);
     var deleted = !deleteFile;
     if (deleteFile && song.filePath != null) {
       try {
@@ -558,10 +796,21 @@ class SongActionsBottomSheet extends ConsumerWidget {
           deleted = true;
         } catch (_) {}
       }
-      if (deleted)
+      if (deleted) {
         await MusicFolderService.removeFromMediaStore(song.filePath!);
+      }
+    }
+    if (deleteFile && deleted) {
+      await recordLocalSongDeletionInLink(
+        song,
+        songRepository: repo,
+        favoritesService: container.read(favoritesServiceProvider),
+        playlistService: container.read(playlistServiceProvider),
+      );
     }
     container.invalidate(songsProvider);
+    container.invalidate(favoritesProvider);
+    container.invalidate(playlistsProvider);
     _say(
       !deleteFile
           ? lokalText(

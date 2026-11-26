@@ -1,5 +1,7 @@
 import '../../models/song.dart';
 import 'link_protocol.dart';
+import 'link_song_bindings.dart';
+import 'transfer_artifact_cleaner.dart';
 
 /// Candidates only: the desktop must confirm the original file still exists.
 /// IDs belong to one paired server and must never match another PC by accident.
@@ -12,14 +14,12 @@ class LinkCopyIdentity {
       final id = track['id']?.toString();
       if (id == null || id.isEmpty) continue;
       _byId[id] = track;
+      final cleaned = cleanTransferMetadata(
+        title: track['title']?.toString() ?? '',
+        artist: track['artist']?.toString() ?? '',
+      );
       _byName
-          .putIfAbsent(
-            _key(
-              track['artist']?.toString() ?? '',
-              track['title']?.toString() ?? '',
-            ),
-            () => [],
-          )
+          .putIfAbsent(_key(cleaned.artist, cleaned.title), () => [])
           .add(track);
     }
   }
@@ -32,35 +32,53 @@ class LinkCopyIdentity {
       '${_normalize(artist)}\u0000${_normalize(title)}';
 
   String resolverKey(Song song) {
-    final original = song.remoteServerId == serverId
-        ? _byId[song.remoteId]
-        : null;
+    final boundRemoteId = LinkSongBindings.instance.remoteIdForSong(
+      song,
+      serverId,
+    );
+    final original = boundRemoteId != null ? _byId[boundRemoteId] : null;
     final seconds = original?['duration'];
     if (original != null &&
         seconds is num &&
         seconds.isFinite &&
         seconds >= 0) {
+      final cleanedOriginal = cleanTransferMetadata(
+        title: original['title']?.toString() ?? '',
+        artist: original['artist']?.toString() ?? '',
+      );
       return linkTrackKey(
-        original['artist']?.toString() ?? '',
-        original['title']?.toString() ?? '',
+        cleanedOriginal.artist,
+        cleanedOriginal.title,
         Duration(milliseconds: (seconds * 1000).round()),
       );
     }
-    return linkTrackKey(song.artist, song.title, song.duration);
+    final cleaned = cleanTransferMetadata(
+      title: song.title,
+      artist: song.artist,
+    );
+    return linkTrackKey(cleaned.artist, cleaned.title, song.duration);
   }
 
   List<String> candidates(Song song) {
     final result = <String>{};
-    if (song.remoteServerId == serverId && _byId.containsKey(song.remoteId)) {
-      result.add(song.remoteId!);
+    final boundRemoteId = LinkSongBindings.instance.remoteIdForSong(
+      song,
+      serverId,
+    );
+    if (boundRemoteId != null && _byId.containsKey(boundRemoteId)) {
+      result.add(boundRemoteId);
     }
     // Metadata remains a fallback for independently scanned copies. Never use
     // a title alone, fuzzy substring matching or an unknown/zero duration.
+    final cleaned = cleanTransferMetadata(
+      title: song.title,
+      artist: song.artist,
+    );
     if (song.duration > Duration.zero &&
-        song.artist.trim().isNotEmpty &&
-        song.title.trim().isNotEmpty) {
+        cleaned.artist.trim().isNotEmpty &&
+        cleaned.title.trim().isNotEmpty) {
       for (final track
-          in _byName[_key(song.artist, song.title)] ??
+          in _byName[_key(cleaned.artist, cleaned.title)] ??
               <Map<String, dynamic>>[]) {
         final duration = track['duration'];
         if (duration is num &&

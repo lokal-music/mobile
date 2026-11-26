@@ -8,8 +8,10 @@ import '../../data/database.dart';
 import '../../data/repositories/song_repository.dart';
 import '../../models/song.dart';
 import '../../models/playlist.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'link_protocol.dart';
 import 'link_favorite_snapshot.dart';
+import 'transfer_artifact_cleaner.dart';
 
 /// Local append-only logs. Pairing never clears or replaces the phone's library.
 class LinkJournal {
@@ -20,30 +22,88 @@ class LinkJournal {
   final historyChanges = StreamController<void>.broadcast();
   bool applyingRemote = false;
   final Map<String, String> _trackKeys = {};
+  final Map<String, String> _keyRedirects = {};
   bool _keysLoaded = false;
+
+  @visibleForTesting
+  void resetForTesting() {
+    applyingRemote = false;
+    _trackKeys.clear();
+    _keyRedirects.clear();
+    _keysLoaded = false;
+  }
+
   Future<void> _loadKeys() async {
     if (_keysLoaded) return;
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString('lokal.link.track_keys');
-    if (raw != null)
-      _trackKeys.addAll(Map<String, String>.from(jsonDecode(raw) as Map));
+    if (raw != null) {
+      try {
+        _trackKeys.addAll(Map<String, String>.from(jsonDecode(raw) as Map));
+      } catch (_) {}
+    }
+    final rawRedirects = prefs.getString('lokal.link.track_key_redirects');
+    if (rawRedirects != null) {
+      try {
+        _keyRedirects.addAll(
+          Map<String, String>.from(jsonDecode(rawRedirects) as Map),
+        );
+      } catch (_) {}
+    }
     _keysLoaded = true;
   }
 
   Future<String> trackKeyFor(Song song) async {
     await _loadKeys();
-    return _trackKeys[song.id] ??
+    final key =
+        _trackKeys[song.id] ??
         linkTrackKey(song.artist, song.title, song.duration);
+    return _keyRedirects[key] ?? key;
   }
 
-  Future<void> registerTrackAlias(String songId, String key) async {
+  Future<void> registerTrackAlias(
+    String songId,
+    String key, {
+    bool overwrite = false,
+  }) async {
     await _loadKeys();
-    if (_trackKeys.containsKey(songId)) return;
+    if (!overwrite && _trackKeys.containsKey(songId)) return;
     _trackKeys[songId] = key;
     await (await SharedPreferences.getInstance()).setString(
       'lokal.link.track_keys',
       jsonEncode(_trackKeys),
     );
+  }
+
+  /// Registers `removed_keys -> keep_key` redirects from a `track.deduplicate`
+  /// op so likes, playlist memberships, and history for removed duplicate keys
+  /// resolve to the surviving track.
+  Future<void> registerKeyRedirects(
+    Iterable<String> removedKeys,
+    String keepKey,
+  ) async {
+    await _loadKeys();
+    if (keepKey.isEmpty) return;
+    var changed = false;
+    for (final raw in removedKeys) {
+      final from = raw.trim();
+      if (from.isEmpty || from == keepKey) continue;
+      if (_keyRedirects[from] != keepKey) {
+        _keyRedirects[from] = keepKey;
+        changed = true;
+      }
+    }
+    if (changed) {
+      await (await SharedPreferences.getInstance()).setString(
+        'lokal.link.track_key_redirects',
+        jsonEncode(_keyRedirects),
+      );
+    }
+  }
+
+  Future<String> resolveTrackKeyRedirect(String key) async {
+    await _loadKeys();
+    return _keyRedirects[key] ?? key;
   }
 
   Future<void> _tail = Future<void>.value();
@@ -91,12 +151,21 @@ class LinkJournal {
   }) async {
     await _loadKeys();
     final songs = candidates ?? await SongRepository().getAllSongs();
-    final alias = songs.where(
-      (song) => _trackKeys[song.id] == track['track_key'],
-    );
+    final rawIncomingKey = track['track_key']?.toString() ?? '';
+    final effectiveKey = _keyRedirects[rawIncomingKey] ?? rawIncomingKey;
+    final targetKeys = <String>{
+      if (rawIncomingKey.isNotEmpty) rawIncomingKey,
+      if (effectiveKey.isNotEmpty) effectiveKey,
+    };
+    final alias = songs.where((song) {
+      final mapped = _trackKeys[song.id];
+      if (mapped == null) return false;
+      return targetKeys.contains(mapped) ||
+          targetKeys.contains(_keyRedirects[mapped]);
+    });
     final localAlias = alias.where((song) => !song.isNetworkSource);
     if (localAlias.isNotEmpty) return localAlias.first;
-    final parts = (track['track_key']?.toString() ?? '').split('|');
+    final parts = effectiveKey.split('|');
     final duration = parts.isNotEmpty
         ? double.tryParse(parts.removeLast()) ?? 0
         : 0;
@@ -104,19 +173,32 @@ class LinkJournal {
     final artist = parts.join('|');
     String normalize(String value) =>
         value.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
+    final cleanedTarget = cleanTransferMetadata(title: title, artist: artist);
     final remoteAlbum = track['album']?.toString().trim() ?? '';
     for (final song in [
       ...songs.where((s) => !s.isNetworkSource),
       ...songs.where((s) => s.isNetworkSource),
     ]) {
       final album = song.album?.trim() ?? '';
-      if ((album.isEmpty ||
-              remoteAlbum.isEmpty ||
-              normalize(album) == normalize(remoteAlbum)) &&
-          normalize(song.title) == title &&
-          normalize(song.artist) == artist &&
-          (song.duration.inMilliseconds / 1000 - duration).abs() <= 2)
+      if (album.isNotEmpty &&
+          remoteAlbum.isNotEmpty &&
+          normalize(album) != normalize(remoteAlbum)) {
+        continue;
+      }
+      if ((song.duration.inMilliseconds / 1000 - duration).abs() > 2) {
+        continue;
+      }
+      if (normalize(song.title) == title && normalize(song.artist) == artist) {
         return song;
+      }
+      final cleanedSong = cleanTransferMetadata(
+        title: song.title,
+        artist: song.artist,
+      );
+      if (normalize(cleanedSong.title) == normalize(cleanedTarget.title) &&
+          normalize(cleanedSong.artist) == normalize(cleanedTarget.artist)) {
+        return song;
+      }
     }
     return alias.firstOrNull;
   }
@@ -340,14 +422,25 @@ class LinkJournal {
     };
   }
 
-  Future<Map<String, dynamic>> libraryAfter(int cursor) async {
+  Future<Map<String, dynamic>> libraryAfter(
+    int cursor, {
+    bool includeTrackLifecycle = true,
+  }) async {
     final rows = await Database.instance.libraryOpEntitys
         .where()
         .idGreaterThan(cursor)
         .limit(250)
         .findAll();
+    final visible = includeTrackLifecycle
+        ? rows
+        : rows
+              .where(
+                (row) =>
+                    row.op != 'track.delete' && row.op != 'track.deduplicate',
+              )
+              .toList();
     return {
-      'items': [for (final row in rows) wireOp(row)],
+      'items': [for (final row in visible) wireOp(row)],
       'cursor': rows.isEmpty ? cursor : rows.last.id,
       'hasMore': rows.length == 250,
     };
@@ -362,6 +455,21 @@ class LinkJournal {
     'op': row.op,
     'fields': jsonDecode(row.fieldsJson),
   };
+
+  static const Set<String> _validLibraryOps = {
+    'like',
+    'unlike',
+    'playlist.create',
+    'playlist.rename',
+    'playlist.delete',
+    'playlist.add',
+    'playlist.remove',
+    'playlist.move',
+    'track.edit',
+    'track.deduplicate',
+    'track.delete',
+  };
+
   Future<List<Map<String, dynamic>>> mergeLibrary(
     List<dynamic> rawItems,
   ) async {
@@ -374,18 +482,27 @@ class LinkJournal {
       await Database.instance.writeTxn(() async {
         for (final raw in rawItems) {
           final item = Map<String, dynamic>.from(raw as Map);
+          final entity = item['entity'];
+          final op = item['op'];
           if (item['op_id'] is! String ||
               item['device_id'] is! String ||
               item['entity_id'] is! String ||
+              op is! String ||
+              !_validLibraryOps.contains(op) ||
               !RegExp(r'^\d{16}:\d{8}$')
                   .hasMatch(item['hlc']?.toString() ?? '') ||
-              !{'like', 'playlist', 'track'}.contains(item['entity']))
+              !{'like', 'playlist', 'track'}.contains(entity) ||
+              (entity == 'like'
+                  ? !{'like', 'unlike'}.contains(op)
+                  : !op.startsWith('$entity.'))) {
             throw const FormatException('Invalid library operation.');
+          }
           final fields =
               item['fields'] ??
               jsonDecode(item['fields_json'] as String? ?? '{}');
-          if (fields is! Map)
+          if (fields is! Map) {
             throw const FormatException('Invalid library fields.');
+          }
           clock = nextLinkClock(clock, incoming: item['hlc'] as String);
           final existing = await Database.instance.libraryOpEntitys
               .filter()
@@ -399,9 +516,9 @@ class LinkJournal {
             ..opId = item['op_id'] as String
             ..deviceId = item['device_id'] as String
             ..hlc = item['hlc'] as String
-            ..entity = item['entity'] as String
+            ..entity = entity as String
             ..entityId = item['entity_id'] as String
-            ..op = item['op'] as String
+            ..op = op
             ..fieldsJson = jsonEncode(fields);
           await Database.instance.libraryOpEntitys.put(row);
           accepted.add({...item, 'fields': Map<String, dynamic>.from(fields)});
@@ -440,6 +557,61 @@ class LinkJournal {
     return result;
   }
 
+  Future<bool> isTrackTombstoned({
+    required String artist,
+    required String title,
+    required Duration duration,
+    DateTime? addedAt,
+  }) async {
+    if (!Database.isInitialized) return false;
+    await _loadKeys();
+    final cleaned = cleanTransferMetadata(title: title, artist: artist);
+    final cleanKey = linkTrackKey(cleaned.artist, cleaned.title, duration);
+    final rawKey = linkTrackKey(artist, title, duration);
+    final redirectedClean = _keyRedirects[cleanKey] ?? cleanKey;
+    final redirectedRaw = _keyRedirects[rawKey] ?? rawKey;
+    final candidateKeys = <String>{
+      if (cleanKey.isNotEmpty) cleanKey,
+      if (rawKey.isNotEmpty) rawKey,
+      if (redirectedClean.isNotEmpty) redirectedClean,
+      if (redirectedRaw.isNotEmpty) redirectedRaw,
+    };
+    if (candidateKeys.isEmpty) return false;
+
+    final rows = await Database.instance.libraryOpEntitys
+        .filter()
+        .entityEqualTo('track')
+        .opEqualTo('track.delete')
+        .findAll();
+    if (rows.isEmpty) return false;
+
+    String? newestStamp;
+    int? newestHlcMs;
+    for (final row in rows) {
+      var matched = candidateKeys.contains(row.entityId);
+      if (!matched) {
+        try {
+          final fields = jsonDecode(row.fieldsJson);
+          if (fields is Map) {
+            final tk = fields['track_key']?.toString() ?? '';
+            final rawTk = fields['raw_track_key']?.toString() ?? '';
+            matched = candidateKeys.contains(tk) ||
+                candidateKeys.contains(rawTk);
+          }
+        } catch (_) {}
+      }
+      if (!matched) continue;
+      final stamp = '${row.hlc}:${row.deviceId}:${row.opId}';
+      if (newestStamp == null || stamp.compareTo(newestStamp) > 0) {
+        newestStamp = stamp;
+        newestHlcMs = int.tryParse(row.hlc.split(':').first) ?? 0;
+      }
+    }
+    if (newestHlcMs == null) return false;
+    final threshold = (addedAt?.millisecondsSinceEpoch ?? 0) - 5000;
+    return newestHlcMs >= threshold;
+  }
+
   Future<bool> wins(Map<String, dynamic> item, String field) async {
     String stamp(Map<String, dynamic> value) =>
         '${value['hlc']}:${value['device_id']}:${value['op_id']}';
@@ -453,8 +625,12 @@ class LinkJournal {
       if (field == 'liked') return row.op == 'like' || row.op == 'unlike';
       if (field == 'name')
         return row.op == 'playlist.create' || row.op == 'playlist.rename';
-      if (field == 'deleted')
+      if (field == 'deleted') {
+        if (item['entity'] == 'track') {
+          return row.op == 'track.delete';
+        }
         return row.op == 'playlist.delete' || row.op == 'playlist.create';
+      }
       if (field.startsWith('member:'))
         return [
               'playlist.add',

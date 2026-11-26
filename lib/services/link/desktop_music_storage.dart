@@ -8,7 +8,7 @@ import 'package:path/path.dart' as p;
 
 import '../music_folder_service.dart';
 import '../music_library_path.dart';
-import 'link_protocol.dart';
+import 'transfer_artifact_cleaner.dart';
 
 class DesktopMusicFolder {
   const DesktopMusicFolder(this.uri, {this.path});
@@ -68,15 +68,30 @@ class DesktopMusicStorage {
       );
   }
 
-  static String _name(String artist, String title, String extension) {
-    var base = '$artist - $title'
+  static String cleanBaseStem(String artist, String title) {
+    final cleaned = cleanTransferMetadata(title: title, artist: artist);
+    final cleanArtist = isPlaceholderTransferArtist(cleaned.artist)
+        ? ''
+        : cleaned.artist.trim();
+    final cleanTitle = cleaned.title.trim();
+    final combined = cleanArtist.isEmpty
+        ? cleanTitle
+        : cleanTitle.isEmpty
+        ? cleanArtist
+        : '$cleanArtist - $cleanTitle';
+    var base = combined
         .replaceAll(RegExp(r'[\\/:*?"<>|\x00-\x1f]'), ' ')
         .replaceAll(RegExp(r'\s+'), ' ')
         .trim()
         .replaceAll(RegExp(r'^[. ]+|[. ]+$'), '');
-    if (base.isEmpty) base = 'Song';
-    base = String.fromCharCodes(base.runes.take(90));
-    return '$base - ${linkUuid()}.$extension';
+    if (base.isEmpty ||
+        !RegExp(r'[\p{L}\p{N}]', unicode: true).hasMatch(base)) {
+      base = 'Song';
+    }
+    base = String.fromCharCodes(
+      base.runes.take(120),
+    ).trim().replaceAll(RegExp(r'[. ]+$'), '');
+    return base.isEmpty ? 'Song' : base;
   }
 
   Future<DesktopMusicFile> save(
@@ -96,23 +111,47 @@ class DesktopMusicStorage {
       );
     final length = await source.length();
     if (length == 0) throw StateError('The desktop song file is empty.');
+    final cleaned = cleanTransferMetadata(title: title, artist: artist);
+    final effectiveArtist = isPlaceholderTransferArtist(cleaned.artist)
+        ? artist
+        : cleaned.artist;
     final directories = MusicLibraryPath.directories(
-      artist: artist,
+      artist: effectiveArtist,
       album: album,
       albumArtist: albumArtist,
     );
     final relative = directories.join('/');
-    final name = _name(artist, title, extension.toLowerCase());
+    final ext = extension.toLowerCase();
+    final stem = cleanBaseStem(artist, title);
+    final defaultName = '$stem.$ext';
     for (final folder in folders) {
       final root = folder.path;
       if (root != null && p.isAbsolute(root)) {
-        final target = File(p.joinAll([root, ...directories, name]));
-        final part = File('${target.path}.part');
+        final targetDir = Directory(p.joinAll([root, ...directories]));
+        File? part;
         try {
-          await target.parent.create(recursive: true);
+          await targetDir.create(recursive: true);
+          File? target;
+          for (var i = 1; i <= 10000; i++) {
+            final candidateName = i == 1 ? '$stem.$ext' : '$stem ($i).$ext';
+            final candidate = File(p.join(targetDir.path, candidateName));
+            if (!await candidate.exists()) {
+              target = candidate;
+              break;
+            }
+          }
+          if (target == null) {
+            throw const FileSystemException(
+              'Too many duplicate song files in target folder',
+            );
+          }
+          part = File('${target.path}.part');
           await source.copy(part.path);
           if (await part.length() != length)
             throw const FileSystemException('Incomplete copy');
+          if (await target.exists()) {
+            throw const FileSystemException('Target file already exists');
+          }
           await part.rename(target.path);
           return DesktopMusicFile(
             path: target.path,
@@ -121,7 +160,7 @@ class DesktopMusicStorage {
           );
         } on FileSystemException {
           try {
-            if (await part.exists()) await part.delete();
+            if (part != null && await part.exists()) await part.delete();
           } on FileSystemException {
             /* Keep the failure actionable below. */
           }
@@ -135,7 +174,7 @@ class DesktopMusicStorage {
               'folderTreeUri': folder.uri,
               'sourcePath': source.path,
               'directorySegments': directories,
-              'fileName': name,
+              'fileName': defaultName,
             },
           );
           final uri = result?['uri'] as String?;
@@ -166,6 +205,7 @@ class DesktopMusicStorage {
     final oldPath = entity.filePath, oldFolder = entity.folderUri;
     final oldDocument = entity.mediaStoreUri,
         oldRelative = entity.relativeFolderPath;
+    final oldLastModified = entity.lastModified, oldFileSize = entity.fileSize;
     final output = await save(
       File(oldPath),
       title: entity.title,
@@ -179,12 +219,25 @@ class DesktopMusicStorage {
       entity.folderUri = output.folderUri;
       entity.mediaStoreUri = output.documentUri;
       entity.relativeFolderPath = output.relativeFolderPath;
+      if (!output.path.startsWith('content://')) {
+        try {
+          final stat = await File(output.path).stat();
+          if (stat.type != FileSystemEntityType.notFound) {
+            entity.lastModified = stat.modified;
+            entity.fileSize = stat.size;
+          }
+        } on FileSystemException {
+          /* Retain prior metadata if stat fails. */
+        }
+      }
       await persist(entity);
     } catch (_) {
       entity.filePath = oldPath;
       entity.folderUri = oldFolder;
       entity.mediaStoreUri = oldDocument;
       entity.relativeFolderPath = oldRelative;
+      entity.lastModified = oldLastModified;
+      entity.fileSize = oldFileSize;
       try {
         await remove(output);
       } catch (_) {

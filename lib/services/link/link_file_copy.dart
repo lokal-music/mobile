@@ -4,12 +4,15 @@ import 'copy_check_guard.dart';
 
 import '../../data/database.dart';
 import '../../data/repositories/song_repository.dart';
+import '../../features/discovery/recommendation_match.dart';
 import '../../models/lokal_remote_state.dart';
 import '../../models/song.dart';
 import 'link_journal.dart';
 import 'link_copy_identity.dart';
+import 'link_song_bindings.dart';
 import 'lokal_desktop_source.dart';
 import 'lokal_link_service.dart';
+import 'transfer_artifact_cleaner.dart';
 
 class LinkCopyPlan {
   const LinkCopyPlan({
@@ -70,6 +73,7 @@ class LinkFileCopy {
 
   Future<LinkCopyPlan> _buildPlan() async {
     _check();
+    await LinkSongBindings.instance.ensureLoaded();
     _checking('Connecting to desktop…');
     final source = LokalDesktopSource.instance;
     final contentMatching = await source.requireOriginalFileSupport(
@@ -86,13 +90,25 @@ class LinkFileCopy {
     final originalChecks = <String, Future<bool>>{};
     final confirmedDesktopIds = <String>{};
     Future<bool> alreadyOnDesktop(Song song) async {
-      for (final id in identity.candidates(song)) {
+      final candidateIds = <String>{
+        if (LinkSongBindings.instance.remoteIdForSong(song, server.id)
+            case final boundId?)
+          boundId,
+        ...identity.candidates(song),
+      };
+      for (final id in candidateIds) {
         _check();
         if (await originalChecks.putIfAbsent(
           id,
           () => source.hasOriginalFile(credentials, id),
         )) {
           confirmedDesktopIds.add(id);
+          await LinkSongBindings.instance.bind(
+            song.id,
+            serverId: server.id,
+            remoteId: id,
+            filePath: song.filePath,
+          );
           await source.rememberDesktopOriginal(
             song,
             server.id,
@@ -264,6 +280,12 @@ class LinkFileCopy {
             missing.add(candidates[index]);
           } else {
             confirmedDesktopIds.add(remoteId);
+            await LinkSongBindings.instance.bind(
+              candidates[index].id,
+              serverId: server.id,
+              remoteId: remoteId,
+              filePath: candidates[index].filePath,
+            );
             await source.rememberDesktopOriginal(
               candidates[index],
               server.id,
@@ -274,17 +296,61 @@ class LinkFileCopy {
         }
       }
     }
+
+    // Filter out tombstoned local songs from toDesktop.
+    final filteredToDesktop = <Song>[];
+    for (final song in missing) {
+      _check();
+      if (await LinkJournal.instance.isTrackTombstoned(
+        artist: song.artist,
+        title: song.title,
+        duration: song.duration,
+        addedAt: song.dateAdded,
+      )) {
+        continue;
+      }
+      filteredToDesktop.add(song);
+    }
+
     String name(String value) =>
         value.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
-    String key(String artist, String title) =>
+    String cleanPairKey(String artist, String title) {
+      final cleaned = cleanTransferMetadata(title: title, artist: artist);
+      final aKey = recommendationKey(leadArtist(cleaned.artist));
+      final tKey = titleKey(cleaned.title);
+      final normA = aKey.isNotEmpty ? aKey : name(cleaned.artist);
+      final normT = tKey.isNotEmpty ? tKey : name(cleaned.title);
+      return '$normA\u0000$normT';
+    }
+    String rawPairKey(String artist, String title) =>
         '${name(artist)}\u0000${name(title)}';
+
     final localByName = <String, List<Song>>{};
-    for (final song in local)
-      localByName.putIfAbsent(key(song.artist, song.title), () => []).add(song);
+    for (final song in local) {
+      localByName
+          .putIfAbsent(cleanPairKey(song.artist, song.title), () => [])
+          .add(song);
+      localByName
+          .putIfAbsent(rawPairKey(song.artist, song.title), () => [])
+          .add(song);
+    }
+
+    final allowedSongIds = {for (final song in local) song.id};
+    final allowedPaths = {
+      for (final song in local)
+        if (song.filePath != null && song.filePath!.isNotEmpty) song.filePath!,
+    };
+    final boundRemoteIds = await LinkSongBindings.instance.remoteIdsForServer(
+      server.id,
+      allowedSongIds: allowedSongIds,
+      allowedPaths: allowedPaths,
+    );
+
     final downloads = <({Map<String, dynamic> track, Song? existing})>[];
     final seen = <String>{};
     final localDesktopIds = {
       ...confirmedDesktopIds,
+      ...boundRemoteIds,
       for (final song in local)
         if (song.remoteServerId == server.id && song.remoteId != null)
           song.remoteId!,
@@ -302,10 +368,32 @@ class LinkFileCopy {
       final title = track['title'] as String? ?? '',
           artist = track['artist'] as String? ?? '';
       final seconds = (track['duration'] as num? ?? 0).toDouble();
-      if ((localByName[key(artist, title)] ?? []).any(
+      final matchedByClean =
+          localByName[cleanPairKey(artist, title)] ?? const <Song>[];
+      final matchedByRaw =
+          localByName[rawPairKey(artist, title)] ?? const <Song>[];
+      if ([...matchedByClean, ...matchedByRaw].any(
         (song) => (song.duration.inMilliseconds / 1000 - seconds).abs() <= 2,
-      ))
+      )) {
         continue;
+      }
+      final addedAtRaw = track['added_at'] ?? track['addedAt'];
+      DateTime? addedAt;
+      if (addedAtRaw is num && addedAtRaw > 0) {
+        // Desktop added_at is unix seconds (or ms if > 1e11).
+        final ms = addedAtRaw > 100000000000
+            ? addedAtRaw.round()
+            : (addedAtRaw * 1000).round();
+        addedAt = DateTime.fromMillisecondsSinceEpoch(ms);
+      }
+      if (await LinkJournal.instance.isTrackTombstoned(
+        artist: artist,
+        title: title,
+        duration: Duration(milliseconds: (seconds * 1000).round()),
+        addedAt: addedAt,
+      )) {
+        continue;
+      }
       final existing = remoteById[id];
       downloads.add((track: track, existing: existing));
     }
@@ -314,7 +402,7 @@ class LinkFileCopy {
     _checking('Ready to review files');
     return LinkCopyPlan(
       server: server,
-      toDesktop: missing,
+      toDesktop: filteredToDesktop,
       toPhone: downloads,
       toMusicFolder: recover,
     );

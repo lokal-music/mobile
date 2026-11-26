@@ -35,13 +35,17 @@ import 'package:path_provider/path_provider.dart';
 import '../../data/database.dart';
 import '../../data/repositories/song_repository.dart';
 import '../../models/song.dart';
+import '../../src/rust/api/scanner.dart' show extractFileMetadata;
 import '../library_scanner_service.dart' show ScanProgress;
+import '../lokal_paired_desktops_store.dart';
 import '../lokal_remote_credentials_store.dart';
 import '../../models/lokal_remote_state.dart';
 import '../network_cache_service.dart';
 import '../sources/network_source_service.dart';
 import 'link_journal.dart';
 import 'link_protocol.dart';
+import 'link_song_bindings.dart';
+import 'transfer_artifact_cleaner.dart';
 import '../album_art_service.dart';
 
 /// A small independent artwork thumbnail for a history-only phone play.
@@ -557,25 +561,104 @@ class LokalDesktopSource extends NetworkSourceService {
     ),
   );
 
+  Future<void> _safeBind(
+    String songId, {
+    int? serverId,
+    String? remoteId,
+    String? sha256,
+    String? filePath,
+  }) async {
+    try {
+      await LinkSongBindings.instance.bind(
+        songId,
+        serverId: serverId,
+        remoteId: remoteId,
+        sha256: sha256,
+        filePath: filePath,
+      );
+    } on MissingPluginException {
+      // Isolated unit tests without SharedPreferences mock still exercise HTTP.
+    }
+  }
+
+  Future<List<String>> _safeFindBoundSongIds(
+    int serverId,
+    String remoteId,
+  ) async {
+    try {
+      return await LinkSongBindings.instance.findLocalSongIdsForServer(
+        serverId,
+        remoteId,
+      );
+    } on MissingPluginException {
+      return const [];
+    }
+  }
+
+  Future<void> _safeUpdateBoundFilePath(
+    String songId,
+    String newFilePath, {
+    String? oldFilePath,
+  }) async {
+    try {
+      await LinkSongBindings.instance.updateFilePath(
+        songId,
+        newFilePath,
+        oldFilePath: oldFilePath,
+      );
+    } on MissingPluginException {
+      // Isolated unit tests without SharedPreferences mock.
+    }
+  }
+
   Future<void> _rememberDesktopOriginal(
     Song song,
     int serverId,
     String remoteId, {
     bool Function()? stillCurrent,
   }) async {
-    if (!Database.isInitialized) return;
-    final id = int.tryParse(song.id);
-    if (id == null) return;
-    await Database.instance.writeTxn(() async {
-      final row = await Database.songs.get(id);
-      if (stillCurrent?.call() == false ||
-          row == null ||
-          !isDownloadedDesktopOriginal(row))
-        return;
-      row.remoteServerId = serverId;
-      row.remoteId = remoteId;
-      await Database.songs.put(row);
-    });
+    if (stillCurrent?.call() == false) return;
+    int? prevServerId = song.remoteServerId;
+    String? prevRemoteId = song.remoteId;
+    String? boundPath = song.filePath;
+    if (Database.isInitialized) {
+      final id = int.tryParse(song.id);
+      if (id == null) return;
+      var updated = false;
+      await Database.instance.writeTxn(() async {
+        final row = await Database.songs.get(id);
+        if (stillCurrent?.call() == false ||
+            row == null ||
+            !isDownloadedDesktopOriginal(row)) {
+          return;
+        }
+        prevServerId = row.remoteServerId;
+        prevRemoteId = row.remoteId;
+        boundPath = row.filePath;
+        row.remoteServerId = serverId;
+        row.remoteId = remoteId;
+        await Database.songs.put(row);
+        updated = true;
+      });
+      if (!updated) return;
+    }
+    if (prevServerId != null &&
+        prevServerId != serverId &&
+        prevRemoteId != null &&
+        prevRemoteId!.isNotEmpty) {
+      await _safeBind(
+        song.id,
+        serverId: prevServerId,
+        remoteId: prevRemoteId,
+        filePath: boundPath,
+      );
+    }
+    await _safeBind(
+      song.id,
+      serverId: serverId,
+      remoteId: remoteId,
+      filePath: boundPath,
+    );
   }
 
   /// HEAD runs the desktop's paired-original route but sends no audio bytes.
@@ -758,6 +841,17 @@ class LokalDesktopSource extends NetworkSourceService {
         break;
       }
     }
+    if (downloadedOriginal == null) {
+      for (final rawSongId in await _safeFindBoundSongIds(server.id, id)) {
+        final numericId = int.tryParse(rawSongId);
+        if (numericId == null) continue;
+        final candidate = await Database.songs.get(numericId);
+        if (candidate != null && isDownloadedDesktopOriginal(candidate)) {
+          downloadedOriginal = candidate;
+          break;
+        }
+      }
+    }
     var copy = downloadedOriginal;
     await copyDesktopOriginalAndSidecars(
       hasDownloadedOriginal: downloadedOriginal != null,
@@ -838,12 +932,19 @@ class LokalDesktopSource extends NetworkSourceService {
               received != response.contentLength)) {
         throw const HttpException('Desktop file transfer was incomplete.');
       }
-      final expected = response.headers['x-content-sha256'];
+      final expected = response.headers['x-content-sha256']
+          ?.trim()
+          .toLowerCase();
+      final computedDigest = (await sha256.bind(part.openRead()).first)
+          .toString();
       if (expected != null &&
-          (await sha256.bind(part.openRead()).first).toString() !=
-              expected.toLowerCase()) {
+          expected.isNotEmpty &&
+          computedDigest != expected) {
         throw const FormatException('Desktop file checksum did not match.');
       }
+      final fileSha256 = (expected != null && expected.isNotEmpty)
+          ? expected
+          : computedDigest;
       final artwork = await AlbumArtService.instance.resolveArtworkPath(
         existingPath: 'lokal-cover://$id',
         audioSourcePath: 'lokal://${server.id}/$id',
@@ -865,9 +966,15 @@ class LokalDesktopSource extends NetworkSourceService {
         entity ??= matching.isEmpty ? null : matching.first;
       }
       entity ??= SongEntity()..dateAdded = DateTime.now();
+      final priorServerId = entity.remoteServerId;
+      final priorRemoteId = entity.remoteId;
+      final cleaned = cleanTransferMetadata(
+        title: track['title']?.toString() ?? 'Unknown track',
+        artist: track['artist']?.toString() ?? 'Unknown artist',
+      );
       entity.filePath = file.path;
-      entity.title = track['title'] as String? ?? 'Unknown track';
-      entity.artist = track['artist'] as String? ?? 'Unknown artist';
+      entity.title = cleaned.title;
+      entity.artist = cleaned.artist;
       entity.albumArtist =
           (track['album_artist'] ??
                   track['albumArtist'] ??
@@ -889,13 +996,51 @@ class LokalDesktopSource extends NetworkSourceService {
           (track['bit_depth'] as num?)?.toInt() ?? entity.bitDepth;
       entity.bitrate = (track['bitrate'] as num?)?.toInt() ?? entity.bitrate;
       entity.genre = _genre(track) ?? entity.genre;
-      await LocalMetadataRepair.probe(entity, persist: false);
+      var protectDesktopMetadata = true;
+      try {
+        await LocalMetadataRepair.probe(entity, persist: false);
+        final embedded = await extractFileMetadata(path: file.path);
+        final embeddedTitle = embedded?.title?.trim() ?? '';
+        final embeddedArtist = embedded?.artist?.trim() ?? '';
+        if (embeddedTitle.isNotEmpty &&
+            embeddedArtist.isNotEmpty &&
+            !hasTransferArtifact(embeddedTitle) &&
+            !isPlaceholderTransferArtist(embeddedArtist) &&
+            embeddedTitle.toLowerCase() == entity.title.trim().toLowerCase() &&
+            embeddedArtist.toLowerCase() ==
+                entity.artist.trim().toLowerCase()) {
+          protectDesktopMetadata = false;
+        }
+      } catch (_) {
+        protectDesktopMetadata = true;
+      }
+      if (protectDesktopMetadata) {
+        entity.hasLocalEdits = true;
+      }
       final saved = entity;
       await _musicStorage.saveEntity(
         saved,
         persist: (row) async {
           await _putLibrarySong(row);
         },
+      );
+      if (priorServerId != null &&
+          priorServerId != server.id &&
+          priorRemoteId != null &&
+          priorRemoteId.isNotEmpty) {
+        await _safeBind(
+          saved.id.toString(),
+          serverId: priorServerId,
+          remoteId: priorRemoteId,
+          filePath: saved.filePath,
+        );
+      }
+      await _safeBind(
+        saved.id.toString(),
+        serverId: server.id,
+        remoteId: id,
+        sha256: fileSha256,
+        filePath: saved.filePath,
       );
       return saved;
     } finally {
@@ -1179,17 +1324,58 @@ class LokalDesktopSource extends NetworkSourceService {
   String get protocol => 'lokal';
   @override
   String get coverScheme => 'lokal-cover://';
+  bool _serverMatchesCredentials(
+    NetworkServerEntity server,
+    LokalRemoteCredentials value, {
+    bool requireSameOrigin = true,
+  }) {
+    if (value.desktopId == null ||
+        '${value.desktopId}:${value.desktopUserId ?? 'guest'}' !=
+            server.username) {
+      return false;
+    }
+    bool rootOrigin(Uri? uri) =>
+        uri != null &&
+        {'http', 'https'}.contains(uri.scheme) &&
+        uri.host.isNotEmpty &&
+        uri.userInfo.isEmpty &&
+        (uri.path.isEmpty || uri.path == '/') &&
+        !uri.hasQuery &&
+        !uri.hasFragment;
+    final serverUri = Uri.tryParse(server.baseUrl);
+    if (!rootOrigin(serverUri) || !rootOrigin(value.origin)) return false;
+    return !requireSameOrigin || serverUri!.origin == value.origin.origin;
+  }
+
   Future<LokalRemoteCredentials> _credentials(
     NetworkServerEntity server,
   ) async {
     final value = await SecureLokalRemoteCredentialsStore().read();
-    if (value == null ||
-        '${value.desktopId}:${value.desktopUserId ?? 'guest'}' !=
-            server.username ||
-        value.origin.toString() != server.baseUrl) {
-      throw StateError('Reconnect to this Lokal desktop to stream its songs.');
+    if (value != null && _serverMatchesCredentials(server, value)) {
+      return value;
     }
-    return value;
+    try {
+      final paired = await LokalPairedDesktopsStore().readAll(
+        legacyActive: value,
+      );
+      for (final entry in paired) {
+        if (_serverMatchesCredentials(server, entry.credentials)) {
+          return entry.credentials;
+        }
+      }
+      for (final entry in paired) {
+        if (_serverMatchesCredentials(
+          server,
+          entry.credentials,
+          requireSameOrigin: false,
+        )) {
+          return entry.credentials;
+        }
+      }
+    } on Object {
+      // Secure storage may be unavailable in isolated unit tests.
+    }
+    throw StateError('Reconnect to this Lokal desktop to stream its songs.');
   }
 
   String? _genre(Map<String, dynamic> track) => desktopLinkGenres(track);
@@ -1431,6 +1617,17 @@ class LokalDesktopSource extends NetworkSourceService {
         .remoteServerIdEqualTo(server.id)
         .remoteIdEqualTo(remoteId)
         .findFirst();
+    if (entity == null || !isDownloadedDesktopOriginal(entity)) {
+      for (final rawId in await _safeFindBoundSongIds(server.id, remoteId)) {
+        final numericId = int.tryParse(rawId);
+        if (numericId == null) continue;
+        final candidate = await Database.songs.get(numericId);
+        if (candidate != null && isDownloadedDesktopOriginal(candidate)) {
+          entity = candidate;
+          break;
+        }
+      }
+    }
     if (entity != null && isDownloadedDesktopOriginal(entity)) {
       final genre = _genre(track);
       if (isUnclassifiedLinkGenre(entity.genre) && genre?.isNotEmpty == true) {
@@ -1440,15 +1637,21 @@ class LokalDesktopSource extends NetworkSourceService {
       }
       return SongRepository().songFromEntity(entity);
     }
+    final cleanedTrack = cleanTransferMetadata(
+      title: track['title']?.toString() ?? 'Unknown track',
+      artist: track['artist']?.toString() ?? 'Unknown artist',
+    );
     final journal = LinkJournal.instance;
     final key =
         track['track_key'] ??
-        '${track['artist']?.toString().trim().toLowerCase()}|${track['title']?.toString().trim().toLowerCase()}|${(track['duration'] as num? ?? 0).round()}';
+        '${cleanedTrack.artist.trim().toLowerCase()}|${cleanedTrack.title.trim().toLowerCase()}|${(track['duration'] as num? ?? 0).round()}';
     // Existing remote IDs can be updated directly. Avoid reading and
     // re-matching the entire phone library for every desktop track.
     final local = entity == null
         ? await journal.match({
             ...track,
+            'title': cleanedTrack.title,
+            'artist': cleanedTrack.artist,
             'track_key': key,
           }, candidates: matchCandidates)
         : null;
@@ -1467,8 +1670,8 @@ class LokalDesktopSource extends NetworkSourceService {
     entity ??= SongEntity()
       ..filePath = 'lokal://${server.id}/$remoteId'
       ..dateAdded = DateTime.now();
-    entity.title = track['title']?.toString() ?? 'Unknown track';
-    entity.artist = track['artist']?.toString() ?? 'Unknown artist';
+    entity.title = cleanedTrack.title;
+    entity.artist = cleanedTrack.artist;
     entity.albumArtist = (track['album_artist'] ?? track['albumArtist'])
         ?.toString();
     entity.album = track['album']?.toString();
@@ -1537,9 +1740,7 @@ class LokalDesktopSource extends NetworkSourceService {
     if (path.startsWith('file://')) path = Uri.parse(path).toFilePath();
     // Preserve the real library filename before staging a scoped-storage URI.
     // Staging paths use temporary UUIDs and must never become desktop names.
-    final originalFilename = path.startsWith('content://')
-        ? null
-        : p.basename(path);
+    final rawFilename = path.startsWith('content://') ? null : p.basename(path);
     final pathExtension = normalize(
       Uri.tryParse(path)?.path.split('.').last ?? '',
     );
@@ -1548,6 +1749,25 @@ class LokalDesktopSource extends NetworkSourceService {
         : normalize(song.fileType);
     if (!formats.contains(extension)) {
       throw StateError('This audio format cannot be sent to the desktop.');
+    }
+    var cleaned = cleanTransferMetadata(title: song.title, artist: song.artist);
+    var originalFilename = rawFilename;
+    if (rawFilename != null) {
+      final rawStem = p.basenameWithoutExtension(rawFilename);
+      final cleanedStem = cleanTransferStem(rawStem);
+      if (cleanedStem != rawStem || hasTransferArtifact(rawStem)) {
+        if (isPlaceholderTransferArtist(cleaned.artist)) {
+          final fromStem = cleanTransferMetadata(
+            title: cleanedStem,
+            artist: cleaned.artist,
+          );
+          if (!isPlaceholderTransferArtist(fromStem.artist)) {
+            cleaned = fromStem;
+          }
+        }
+        originalFilename =
+            '${DesktopMusicStorage.cleanBaseStem(cleaned.artist, cleaned.title)}.$extension';
+      }
     }
     var temporary = false;
     Future<String> stage(String uri) async {
@@ -1605,8 +1825,8 @@ class LokalDesktopSource extends NetworkSourceService {
         'x-link-metadata': base64Url.encode(
           utf8.encode(
             jsonEncode({
-              'title': song.title,
-              'artist': song.artist,
+              'title': cleaned.title,
+              'artist': cleaned.artist,
               'album': song.album,
               'extension': extension,
               'originalFilename': ?originalFilename,
@@ -1680,21 +1900,23 @@ class LokalDesktopSource extends NetworkSourceService {
                   : 'The desktop could not save this file (HTTP ${response.statusCode}).$detail',
             );
           }
+          final trackId = body!['trackId'] as String;
+          int? serverId;
           if (Database.isInitialized) {
             final server = await ensureServer(credentials);
-            await rememberDesktopOriginal(
-              song,
-              server.id,
-              body!['trackId'] as String,
-            );
+            serverId = server.id;
+            await rememberDesktopOriginal(song, server.id, trackId);
           }
+          await _safeBind(
+            song.id,
+            serverId: serverId,
+            remoteId: trackId,
+            sha256: digest.toString(),
+            filePath: song.filePath,
+          );
           // Do not lose a separate album cover (cover.jpg/folder.png) when
           // the phone's audio container has no embedded picture.
-          await _uploadCopiedArtwork(
-            song,
-            credentials,
-            body!['trackId'] as String,
-          );
+          await _uploadCopiedArtwork(song, credentials, trackId);
         })().timeout(
           const Duration(minutes: 3),
           onTimeout: () {
@@ -1751,12 +1973,37 @@ class LokalDesktopSource extends NetworkSourceService {
     if (entity == null) {
       throw StateError('The library song is no longer available.');
     }
+    final oldPath = entity.filePath;
     await _musicStorage.saveEntity(
       entity,
       persist: (row) async {
         await _putLibrarySong(row);
       },
     );
+    if (entity.filePath != oldPath &&
+        !entity.filePath.startsWith('content://') &&
+        await File(entity.filePath).exists()) {
+      try {
+        final oldFile = File(oldPath);
+        if (await oldFile.exists()) {
+          await oldFile.delete();
+        }
+      } on FileSystemException {
+        /* Best-effort removal after verified copy. */
+      }
+      await _safeUpdateBoundFilePath(
+        entity.id.toString(),
+        entity.filePath,
+        oldFilePath: oldPath,
+      );
+    } else if (entity.filePath != oldPath &&
+        entity.filePath.startsWith('content://')) {
+      await _safeUpdateBoundFilePath(
+        entity.id.toString(),
+        entity.filePath,
+        oldFilePath: oldPath,
+      );
+    }
   }
 
   /// Repair genres missed by the one-time catalogue import or journal replay.

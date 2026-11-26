@@ -2094,15 +2094,26 @@ class MainActivity: FlutterActivity() {
         }
         val input = File(source)
         require(input.isFile && input.length() > 0)
-        require(folder.findFile(name) == null)
-        val part = folder.createFile("application/octet-stream", "$name.part") ?: error("Cannot create file")
+        val dotIndex = name.lastIndexOf('.')
+        val stem = if (dotIndex > 0) name.substring(0, dotIndex) else name
+        val ext = if (dotIndex > 0) name.substring(dotIndex) else ""
+        var actualName: String? = null
+        for (i in 1..1000) {
+            val candidate = if (i == 1) "$stem$ext" else "$stem ($i)$ext"
+            if (folder.findFile(candidate) == null && folder.findFile("$candidate.part") == null) {
+                actualName = candidate
+                break
+            }
+        }
+        val chosenName = actualName ?: error("Too many duplicate files in folder")
+        val part = folder.createFile("application/octet-stream", "$chosenName.part") ?: error("Cannot create file")
         try {
             val bytes = contentResolver.openOutputStream(part.uri, "wt")?.use { output ->
                 input.inputStream().use { stream -> stream.copyTo(output, 1024 * 1024).also { output.flush() } }
             } ?: error("Cannot open destination")
             require(bytes == input.length() && part.length() == bytes)
-            require(part.renameTo(name))
-            val result = mutableMapOf("uri" to part.uri.toString())
+            require(part.renameTo(chosenName))
+            val result = mutableMapOf("uri" to part.uri.toString(), "name" to chosenName)
             if (part.uri.authority == "com.android.externalstorage.documents") {
                 val id = DocumentsContract.getDocumentId(part.uri).split(":", limit = 2)
                 val base = if (id[0].equals("primary", true)) Environment.getExternalStorageDirectory().absolutePath

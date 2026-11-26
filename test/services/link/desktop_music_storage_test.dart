@@ -41,6 +41,14 @@ void main() {
     await store.saveEntity(entity, persist: (r) async => saved = r);
     expect(saved?.id, 42);
     expect(p.dirname(entity.filePath), p.join(music.path, 'Artist', 'Album'));
+    expect(p.basename(entity.filePath), 'Artist - 駅 .. Song.flac');
+    expect(
+      RegExp(
+        r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}',
+        caseSensitive: false,
+      ).hasMatch(p.basename(entity.filePath)),
+      isFalse,
+    );
     expect(entity.folderUri, 'chosen-uri');
     expect(entity.relativeFolderPath, 'Artist/Album');
     expect(entity.remoteId, 'pc-song');
@@ -48,6 +56,8 @@ void main() {
     expect(entity.sampleRate, 96000);
     expect(entity.bitDepth, 24);
     expect(entity.album, 'Album');
+    expect(entity.fileSize, source.lengthSync());
+    expect(entity.lastModified, isNotNull);
     expect(File(entity.filePath).readAsBytesSync(), source.readAsBytesSync());
     expect(indexed, [entity.filePath]);
     expect(
@@ -109,6 +119,10 @@ void main() {
       'Artist',
       'Album',
     ]);
+    expect(
+      (calls.single.arguments as Map)['fileName'],
+      'Artist - 駅 .. Song.flac',
+    );
   });
   test('revoked folder grant fails without falling back to app data', () async {
     const channel = MethodChannel('test/desktop-copy-revoked');
@@ -163,24 +177,34 @@ void main() {
       expect(source.existsSync(), isTrue);
     },
   );
-  test('same-named songs never overwrite existing music', () async {
+  test('same-named songs use clean Artist - Title.ext and (2) collision suffix without overwriting', () async {
     final store = DesktopMusicStorage(
       folders: () async => [DesktopMusicFolder('chosen-uri', path: music.path)],
       indexMedia: (_) async {},
     );
     final a = await store.save(
       source,
-      title: 'Song',
+      title: 'Song - 11111111-2222-3333-4444-555555555555',
       artist: 'Artist',
       extension: 'flac',
     );
     final b = await store.save(
       source,
-      title: 'Song',
+      title: 'Song [0123456789abcdef]',
       artist: 'Artist',
       extension: 'flac',
     );
+    final c = await store.save(
+      source,
+      title: 'Artist - Song',
+      artist: '<unknown>',
+      extension: 'flac',
+    );
+    expect(p.basename(a.path), 'Artist - Song.flac');
+    expect(p.basename(b.path), 'Artist - Song (2).flac');
+    expect(p.basename(c.path), 'Artist - Song (3).flac');
     expect(a.path, isNot(b.path));
     expect(File(a.path).readAsBytesSync(), File(b.path).readAsBytesSync());
+    expect(File(a.path).readAsBytesSync(), File(c.path).readAsBytesSync());
   });
 }

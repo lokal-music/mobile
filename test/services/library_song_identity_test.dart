@@ -268,4 +268,84 @@ void main() {
     expect(index.byId['remix'], same(remix));
     expect(index.visible, [phone, remix]);
   });
+
+  test('transfer artifacts in local or desktop titles still deduplicate cleanly', () {
+    final phone = song(
+      'phone-corrupt',
+      'Daft Punk - Digital Love - 11111111-2222-3333-4444-555555555555-r1',
+      '/music/Digital Love.flac',
+      artist: '<unknown>',
+      album: 'Discovery',
+    );
+    final pc = song(
+      'pc-clean',
+      'Digital Love [0123456789abcdef]',
+      'lokal://1/dl',
+      artist: 'Daft Punk',
+      album: 'Discovery',
+      source: 'lokal',
+    );
+    final index = preferredLibrarySongIndex([pc, phone]);
+    expect(index.visible.map((s) => s.id), ['phone-corrupt']);
+    expect(index.byId['pc-clean'], same(phone));
+  });
+
+  test('multi-PC lokal:// rows deduplicate to highest quality and alias byId', () {
+    final pc1 = Song(
+      id: 'pc1-cd',
+      title: 'Midnight City',
+      artist: 'M83',
+      album: 'Hurry Up, We\'re Dreaming',
+      duration: const Duration(seconds: 243),
+      fileType: 'FLAC',
+      filePath: 'lokal://1/mc',
+      sourceType: 'lokal',
+      remoteServerId: 1,
+      remoteId: 'mc-1',
+      bitDepth: 16,
+      sampleRate: 44100,
+      resolution: '16-bit / 44.1kHz / 900 kbps',
+    );
+    final pc2 = Song(
+      id: 'pc2-hires',
+      title: 'Midnight City - 99999999-8888-7777-6666-555555555555',
+      artist: 'M83',
+      album: 'Hurry Up, We\'re Dreaming',
+      duration: const Duration(seconds: 244),
+      fileType: 'FLAC',
+      filePath: 'lokal://2/mc',
+      sourceType: 'lokal',
+      remoteServerId: 2,
+      remoteId: 'mc-2',
+      bitDepth: 24,
+      sampleRate: 96000,
+      resolution: '24-bit / 96kHz / 3100 kbps',
+    );
+    final pc3 = Song(
+      id: 'pc3-mp3',
+      title: 'Midnight City',
+      artist: 'M83',
+      album: 'Unknown Album',
+      duration: const Duration(seconds: 243),
+      fileType: 'MP3',
+      filePath: 'lokal://3/mc',
+      sourceType: 'lokal',
+      remoteServerId: 3,
+      remoteId: 'mc-3',
+      resolution: '320 kbps',
+    );
+
+    final index = preferredLibrarySongIndex([pc1, pc2, pc3]);
+    expect(index.visible.map((s) => s.id), ['pc2-hires']);
+    expect(index.byId['pc1-cd'], same(pc2));
+    expect(index.byId['pc2-hires'], same(pc2));
+    expect(index.byId['pc3-mp3'], same(pc2));
+
+    // Equal quality keeps first and still aliases duplicates.
+    final equalA = song('pcA', 'Equal Track', 'lokal://1/eq', source: 'lokal');
+    final equalB = song('pcB', 'Equal Track', 'lokal://2/eq', source: 'lokal');
+    final equalIndex = preferredLibrarySongIndex([equalA, equalB]);
+    expect(equalIndex.visible.map((s) => s.id), ['pcA']);
+    expect(equalIndex.byId['pcB'], same(equalA));
+  });
 }

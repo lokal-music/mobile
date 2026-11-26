@@ -26,15 +26,20 @@ import '../services/link/link_file_copy.dart';
 import '../services/link/desktop_track_copy_command.dart';
 import '../services/link/phone_command_queue.dart';
 import '../services/link/desktop_catalogue_import.dart';
+import '../services/link/link_song_bindings.dart';
 import '../services/link/lokal_desktop_source.dart';
+import '../services/link/transfer_artifact_cleaner.dart';
+import '../features/discovery/recommendation_match.dart';
 import '../core/navigation/root_navigator.dart';
 import '../widgets/lokal/lokal_toast.dart';
 import 'favorites_provider.dart';
 import 'playlist_provider.dart';
+import 'songs_provider.dart';
 import '../core/theme/lokal_appearance.dart';
 
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:isar_community/isar.dart';
 import 'package:flutter/widgets.dart'
@@ -303,6 +308,17 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
     );
   }
 
+  Future<void> _cleanupForgottenDesktop(
+    LokalRemoteCredentials? forgotten,
+  ) async {
+    if (forgotten == null || !Database.isInitialized) return;
+    final cleared = await cleanupForgottenDesktopLibrary(forgotten);
+    if (cleared && !_disposed) {
+      ref.invalidate(songsProvider);
+      ref.invalidate(networkServersProvider);
+    }
+  }
+
   Future<void> forgetConfiguration({
     required LokalRemoteCredentials? expected,
   }) async {
@@ -311,6 +327,7 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
     if (_disposed || revision != _configurationRevision) {
       throw StateError('Desktop pairing changed. Refresh and retry.');
     }
+    final activeBefore = _credentials;
     var vaultAvailable = true;
     LokalRemoteCredentials? fallback;
     if (expected != null) {
@@ -332,6 +349,7 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
         }
         rethrow;
       }
+      await _cleanupForgottenDesktop(expected);
       if (_disposed || revision != _configurationRevision) return;
       disconnect();
       _generation++;
@@ -356,6 +374,7 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
       }
       rethrow;
     }
+    await _cleanupForgottenDesktop(expected ?? activeBefore);
     if (_disposed || revision != _configurationRevision) return;
     disconnect();
     _generation++;
@@ -1555,17 +1574,24 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
       ),
       transferHasError: false,
     );
+    final lookedUpById = <String, Map<String, dynamic>>{};
     final result = await copyDesktopCatalogueTracks(
       requestedIds: ids,
-      loadCatalogue: () => source.lookupCatalogueTracks(credentials, ids),
-      isAlreadyPresent: (id) async {
-        final rows = await Database.songs
-            .filter()
-            .remoteServerIdEqualTo(server.id)
-            .remoteIdEqualTo(id)
-            .findAll();
-        return rows.any(isDownloadedDesktopOriginal);
+      loadCatalogue: () async {
+        final catalogue = await source.lookupCatalogueTracks(credentials, ids);
+        for (final track in catalogue) {
+          final trackId = track['id']?.toString();
+          if (trackId != null && trackId.isNotEmpty) {
+            lookedUpById[trackId] = track;
+          }
+        }
+        return catalogue;
       },
+      isAlreadyPresent: (id) => isDesktopTrackAlreadyPresentLocally(
+        serverId: server.id,
+        remoteId: id,
+        track: lookedUpById[id],
+      ),
       copyTrack: (track) => source.copyOriginalToPhone(server, track),
       shouldContinue: () =>
           _isDesktopCopyCurrent(connectionGeneration, lifecycleEpoch),
@@ -1964,4 +1990,200 @@ class LokalRemoteController extends Notifier<LokalRemoteControllerState>
         : 'Could not reach Lokal on the local network.';
     state = state.copyWith(status: status, error: message);
   }
+}
+
+/// Checks whether a desktop catalogue track is already stored locally on the
+/// phone — via direct `(remoteServerId, remoteId)` row, [LinkSongBindings], or
+/// a canonical `(artist, title, duration <= 2s)` local recording match (binding
+/// the matched local song to `(serverId, remoteId)` so multi-PC pushes never
+/// re-download duplicates).
+@visibleForTesting
+Future<bool> isDesktopTrackAlreadyPresentLocally({
+  required int serverId,
+  required String remoteId,
+  Map<String, dynamic>? track,
+}) async {
+  if (!Database.isInitialized) return false;
+  await LinkSongBindings.instance.ensureLoaded();
+
+  // 1. Direct Isar (remoteServerId, remoteId) downloaded row.
+  final directRows = await Database.songs
+      .filter()
+      .remoteServerIdEqualTo(serverId)
+      .remoteIdEqualTo(remoteId)
+      .findAll();
+  for (final row in directRows) {
+    if (isDownloadedDesktopOriginal(row)) {
+      await LinkSongBindings.instance.bind(
+        row.id.toString(),
+        serverId: serverId,
+        remoteId: remoteId,
+        filePath: row.filePath,
+      );
+      return true;
+    }
+  }
+
+  // 2. Multi-PC LinkSongBindings check.
+  final boundSongIds = await LinkSongBindings.instance.findLocalSongIdsForServer(
+    serverId,
+    remoteId,
+  );
+  for (final idStr in boundSongIds) {
+    final numericId = int.tryParse(idStr);
+    if (numericId != null) {
+      final row = await Database.songs.get(numericId);
+      if (row != null && isDownloadedDesktopOriginal(row)) {
+        return true;
+      }
+    }
+    final binding = LinkSongBindings.instance.peek(idStr);
+    if (binding?.filePath != null && binding!.filePath!.isNotEmpty) {
+      final byPath = await Database.songs
+          .where()
+          .filePathEqualToAnyStartOffsetMs(binding.filePath!)
+          .findFirst();
+      if (byPath != null && isDownloadedDesktopOriginal(byPath)) {
+        return true;
+      }
+    }
+  }
+
+  // 3. Canonical (artist, title, duration within 2s) check across local files.
+  if (track == null) return false;
+  final rawTitle = track['title']?.toString() ?? '';
+  final rawArtist = track['artist']?.toString() ?? '';
+  final durationSec = (track['duration'] as num?)?.toDouble() ?? 0;
+  final targetClean = cleanTransferMetadata(title: rawTitle, artist: rawArtist);
+  var targetArtistKey = recommendationKey(leadArtist(targetClean.artist));
+  if (targetArtistKey.isEmpty) {
+    targetArtistKey = recommendationKey(targetClean.artist);
+  }
+  var targetTitleKey = titleKey(targetClean.title);
+  if (targetTitleKey.isEmpty) {
+    targetTitleKey = recommendationKey(targetClean.title);
+  }
+  if (targetTitleKey.isEmpty || targetArtistKey.isEmpty || durationSec <= 0) {
+    return false;
+  }
+
+  final allRows = await Database.songs.where().findAll();
+  for (final row in allRows) {
+    if (!isDownloadedDesktopOriginal(row) ||
+        row.filePath.startsWith('pending:')) {
+      continue;
+    }
+    final rowDurSec = (row.durationMs ?? 0) / 1000.0;
+    if (rowDurSec <= 0 || (rowDurSec - durationSec).abs() > 2.0) continue;
+
+    final rowClean = cleanTransferMetadata(
+      title: row.title,
+      artist: row.artist,
+    );
+    var rowArtistKey = recommendationKey(leadArtist(rowClean.artist));
+    if (rowArtistKey.isEmpty) {
+      rowArtistKey = recommendationKey(rowClean.artist);
+    }
+    var rowTitleKey = titleKey(rowClean.title);
+    if (rowTitleKey.isEmpty) {
+      rowTitleKey = recommendationKey(rowClean.title);
+    }
+    if (rowTitleKey == targetTitleKey && rowArtistKey == targetArtistKey) {
+      await LinkSongBindings.instance.bind(
+        row.id.toString(),
+        serverId: serverId,
+        remoteId: remoteId,
+        filePath: row.filePath,
+      );
+      return true;
+    }
+  }
+  return false;
+}
+
+/// Cleans up a forgotten desktop's `NetworkServerEntity`, its
+/// `lokal://<serverId>/...` and `ghost://desktop/<serverId>/...` rows in Isar,
+/// clears stale `remoteServerId == serverId` on surviving local audio rows
+/// without touching local files, and removes `serverId` from
+/// [LinkSongBindings].
+@visibleForTesting
+Future<bool> cleanupForgottenDesktopLibrary(
+  LokalRemoteCredentials forgotten,
+) async {
+  if (!Database.isInitialized) return false;
+  final servers = <NetworkServerEntity>[];
+  if (forgotten.desktopId != null && forgotten.desktopId!.isNotEmpty) {
+    final username =
+        '${forgotten.desktopId}:${forgotten.desktopUserId ?? 'guest'}';
+    servers.addAll(
+      await Database.networkServers
+          .filter()
+          .protocolEqualTo('lokal')
+          .usernameEqualTo(username)
+          .findAll(),
+    );
+  } else {
+    servers.addAll(
+      await Database.networkServers
+          .filter()
+          .protocolEqualTo('lokal')
+          .baseUrlEqualTo(forgotten.origin.toString())
+          .findAll(),
+    );
+  }
+  if (servers.isEmpty) return false;
+
+  for (final server in servers) {
+    final serverId = server.id;
+    final streamPrefix = 'lokal://$serverId/';
+    final ghostPrefix = 'ghost://desktop/$serverId/';
+
+    final byServer = await Database.songs
+        .where()
+        .remoteServerIdEqualTo(serverId)
+        .findAll();
+    final byStreamPrefix = await Database.songs
+        .filter()
+        .filePathStartsWith(streamPrefix)
+        .findAll();
+    final byGhostPrefix = await Database.songs
+        .filter()
+        .filePathStartsWith(ghostPrefix)
+        .findAll();
+
+    final seenRows = <int, SongEntity>{
+      for (final row in byServer) row.id: row,
+      for (final row in byStreamPrefix) row.id: row,
+      for (final row in byGhostPrefix) row.id: row,
+    };
+
+    final idsToDelete = <int>[];
+    final localRowsToUnlink = <SongEntity>[];
+    for (final row in seenRows.values) {
+      final isRemoteOrGhost =
+          row.sourceType == 'lokal' ||
+          row.filePath.startsWith(streamPrefix) ||
+          row.filePath.startsWith(ghostPrefix);
+      if (isRemoteOrGhost) {
+        idsToDelete.add(row.id);
+      } else if (row.remoteServerId == serverId) {
+        row.remoteServerId = null;
+        row.remoteId = null;
+        localRowsToUnlink.add(row);
+      }
+    }
+
+    await Database.instance.writeTxn(() async {
+      if (idsToDelete.isNotEmpty) {
+        await Database.songs.deleteAll(idsToDelete);
+      }
+      if (localRowsToUnlink.isNotEmpty) {
+        await Database.songs.putAll(localRowsToUnlink);
+      }
+      await Database.networkServers.delete(serverId);
+    });
+
+    await LinkSongBindings.instance.removeServer(serverId);
+  }
+  return true;
 }

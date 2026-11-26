@@ -62,12 +62,16 @@ class LokalLinkService {
   final Map<String, Completer<LinkMessage>> _requests = {};
   WebSocket? _socket;
   StreamSubscription<dynamic>? _subscription;
+  Set<String>? _peerCapabilities;
   bool _closed = false;
   int _epoch = 0;
   int get connectionGeneration => _epoch;
   Stream<LinkMessage> get messages => _messages.stream;
   Stream<bool> get connections => _connections.stream;
   bool get connected => _socket?.readyState == WebSocket.open;
+  bool get supportsTrackLifecycle =>
+      _peerCapabilities == null ||
+      _peerCapabilities!.contains('track_lifecycle');
 
   Future<String> deviceId() async {
     final prefs = await SharedPreferences.getInstance();
@@ -354,6 +358,7 @@ class LokalLinkService {
     int epoch,
   ) async {
     _checkEpoch(epoch);
+    _peerCapabilities = null;
     final uri = origin.replace(
       scheme: origin.scheme == 'https' ? 'wss' : 'ws',
       path: '/api/remote/ws',
@@ -395,6 +400,16 @@ class LokalLinkService {
         if (raw is! String || raw.length > 1024 * 1024) return;
         try {
           final message = LinkMessage.decode(raw);
+          if (message.type == 'hello') {
+            final rawCaps = message.body['capabilities'];
+            if (rawCaps is List) {
+              _peerCapabilities = Set<String>.from(
+                rawCaps.whereType<String>(),
+              );
+            } else {
+              _peerCapabilities = <String>{};
+            }
+          }
           final request = _requests.remove(message.id);
           if (request != null) {
             request.complete(message);
@@ -410,7 +425,10 @@ class LokalLinkService {
       onDone: () => _lost(socket),
       cancelOnError: true,
     );
-    if (name != null) send('hello', {'deviceName': name});
+    send('hello', {
+      'capabilities': const ['track_lifecycle'],
+      if (name != null) 'deviceName': name,
+    });
     _connections.add(true);
   }
 
@@ -418,6 +436,7 @@ class LokalLinkService {
     if (!identical(_socket, socket)) return;
     ++_epoch;
     _socket = null;
+    _peerCapabilities = null;
     _failRequests();
     if (!_closed) _connections.add(false);
   }
@@ -466,6 +485,7 @@ class LokalLinkService {
     final subscription = _subscription;
     _socket = null;
     _subscription = null;
+    _peerCapabilities = null;
     _failRequests();
     if (socket != null && !_closed) _connections.add(false);
     await subscription?.cancel();

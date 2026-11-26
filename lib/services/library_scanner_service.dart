@@ -4,6 +4,8 @@ import 'dart:io';
 import 'ios_library_scan_epoch.dart';
 import 'ios_transfer_scan_guard.dart';
 import 'library_clear_epoch.dart';
+import 'link/transfer_artifact_cleaner.dart';
+import 'link/transfer_artifact_repair.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -364,6 +366,7 @@ class LibraryScannerService {
     bool forceDeepScan = false,
   }) async* {
     final scanStopwatch = Stopwatch()..start();
+    await TransferArtifactRepairService.instance.repairIfNeeded();
     final scanKey = normalizeFolderIdentifier(folderUri);
     final scanPreferences = await _scanPreferencesService.getPreferences();
 
@@ -747,22 +750,50 @@ class LibraryScannerService {
           isUnknownLibraryArtist(existing.artist) ||
           isUnknownLibraryAlbum(existing.album);
 
-      final artist = (file.artist?.trim().isNotEmpty ?? false)
+      var artist = (file.artist?.trim().isNotEmpty ?? false)
           ? file.artist!.trim()
           : l10n.unknownArtist;
+      final rawStem = _fileStem(file.name).trim();
+      final rawFileTitle = file.title?.trim();
+      var title = (rawFileTitle != null && rawFileTitle.isNotEmpty)
+          ? rawFileTitle
+          : _extractTitleFromFilename(file.name);
+      if (rawFileTitle != null &&
+          rawFileTitle.isNotEmpty &&
+          (hasTransferArtifact(rawFileTitle) ||
+              rawFileTitle.toLowerCase() == rawStem.toLowerCase())) {
+        final cleaned = cleanTransferMetadata(
+          title: rawFileTitle,
+          artist: artist,
+        );
+        title = cleaned.title;
+        artist = cleaned.artist;
+      } else if (rawFileTitle == null || rawFileTitle.isEmpty) {
+        final cleaned = cleanTransferMetadata(title: title, artist: artist);
+        title = cleaned.title;
+        artist = cleaned.artist;
+      }
+      var album = (file.album?.trim().isNotEmpty ?? false)
+          ? file.album!.trim()
+          : l10n.unknownAlbum;
+      var albumArtist = (file.albumArtist?.trim().isNotEmpty ?? false)
+          ? file.albumArtist!.trim()
+          : artist;
+      if (isUnknownLibraryArtist(artist) &&
+          existing != null &&
+          !isUnknownLibraryArtist(existing.artist)) {
+        artist = existing.artist;
+        title = existing.title;
+        album = existing.album ?? album;
+        albumArtist = existing.albumArtist ?? existing.artist;
+      }
       final song = SongEntity()
         ..filePath = file.filePath ?? file.uri
         ..mediaStoreUri = file.uri
-        ..title = (file.title?.trim().isNotEmpty ?? false)
-            ? file.title!.trim()
-            : _extractTitleFromFilename(file.name)
+        ..title = title
         ..artist = artist
-        ..album = (file.album?.trim().isNotEmpty ?? false)
-            ? file.album!.trim()
-            : l10n.unknownAlbum
-        ..albumArtist = (file.albumArtist?.trim().isNotEmpty ?? false)
-            ? file.albumArtist!.trim()
-            : artist
+        ..album = album
+        ..albumArtist = albumArtist
         ..trackNumber = file.trackNumber ?? 0
         ..discNumber = file.discNumber ?? 1
         ..durationMs = file.duration ?? 0
@@ -794,6 +825,9 @@ class LibraryScannerService {
         ..ripper = existing?.ripper
         ..readMode = existing?.readMode
         ..accurateRip = existing?.accurateRip
+        ..remoteId = existing?.remoteId
+        ..remoteServerId = existing?.remoteServerId
+        ..hasLocalEdits = existing?.hasLocalEdits ?? false
         ..metadataComplete =
             (existing?.metadataComplete ?? false) || !needsSparseMetadata;
 
@@ -1741,17 +1775,26 @@ class LibraryScannerService {
           continue;
         }
 
-        final artist = (meta?.artist?.trim().isNotEmpty ?? false)
+        var artist = (meta?.artist?.trim().isNotEmpty ?? false)
             ? meta!.artist!.trim()
             : l10n.unknownArtist;
+        final rawMetaTitle = meta?.title?.trim();
+        var title = (rawMetaTitle != null && rawMetaTitle.isNotEmpty)
+            ? rawMetaTitle
+            : _extractTitleFromFilename(basic.name);
+        if (rawMetaTitle == null ||
+            rawMetaTitle.isEmpty ||
+            hasTransferArtifact(rawMetaTitle)) {
+          final cleaned = cleanTransferMetadata(title: title, artist: artist);
+          title = cleaned.title;
+          artist = cleaned.artist;
+        }
         final song = SongEntity()
           ..filePath = basic.uri
           ..mediaStoreUri = basic.uri.startsWith('content://')
               ? basic.uri
               : null
-          ..title = (meta?.title?.trim().isNotEmpty ?? false)
-              ? meta!.title!.trim()
-              : _extractTitleFromFilename(basic.name)
+          ..title = title
           ..artist = artist
           ..album = (meta?.album?.trim().isNotEmpty ?? false)
               ? meta!.album!.trim()
@@ -1791,6 +1834,9 @@ class LibraryScannerService {
           ..ripper = ripLog?.ripper
           ..readMode = ripLog?.readMode
           ..accurateRip = ripLog?.accurateRipEnabled
+          ..remoteId = existing?.remoteId
+          ..remoteServerId = existing?.remoteServerId
+          ..hasLocalEdits = existing?.hasLocalEdits ?? false
           // ponytail: mark complete on any successful parse. sampleRate/bitDepth
           // are API 31+ only, so requiring them kept this false on older devices
           // and forced a full re-extract every rescan.
@@ -2041,15 +2087,24 @@ class LibraryScannerService {
 
         for (final metadata in chunk.newOrModified) {
           final existing = existingMap[metadata.path];
-          final artist = (metadata.artist?.trim().isNotEmpty ?? false)
+          var artist = (metadata.artist?.trim().isNotEmpty ?? false)
               ? metadata.artist!.trim()
               : l10n.unknownArtist;
+          final rawMetaTitle = metadata.title?.trim();
+          var title = (rawMetaTitle != null && rawMetaTitle.isNotEmpty)
+              ? rawMetaTitle
+              : _extractTitleFromFilename(metadata.path.split('/').last);
+          if (rawMetaTitle == null ||
+              rawMetaTitle.isEmpty ||
+              hasTransferArtifact(rawMetaTitle)) {
+            final cleaned = cleanTransferMetadata(title: title, artist: artist);
+            title = cleaned.title;
+            artist = cleaned.artist;
+          }
           final priorAlbumArtist = existing?.albumArtist?.trim();
           final song = SongEntity()
             ..filePath = metadata.path
-            ..title = (metadata.title?.trim().isNotEmpty ?? false)
-                ? metadata.title!.trim()
-                : _extractTitleFromFilename(metadata.path.split('/').last)
+            ..title = title
             ..artist = artist
             ..album = (metadata.album?.trim().isNotEmpty ?? false)
                 ? metadata.album!.trim()
@@ -2091,6 +2146,9 @@ class LibraryScannerService {
             ..replaygainTrackPeak = metadata.replaygainTrackPeak
             ..replaygainAlbumGain = metadata.replaygainAlbumGain
             ..replaygainAlbumPeak = metadata.replaygainAlbumPeak
+            ..remoteId = existing?.remoteId
+            ..remoteServerId = existing?.remoteServerId
+            ..hasLocalEdits = existing?.hasLocalEdits ?? false
             ..metadataComplete = true;
 
           if (existing != null) {
@@ -2981,13 +3039,18 @@ class LibraryScannerService {
     return scanPlan;
   }
 
-  String _extractTitleFromFilename(String filename) {
+  @visibleForTesting
+  static String extractTitleFromFilename(String filename) {
     final dotIndex = filename.lastIndexOf('.');
     String name = dotIndex > 0 ? filename.substring(0, dotIndex) : filename;
+    name = cleanTransferStem(name);
     name = name.replaceFirst(RegExp(r'^\d{1,3}[\s._-]+'), '');
     name = name.replaceAll('_', ' ');
     return name.trim().replaceAll(RegExp(r'\s+'), ' ');
   }
+
+  String _extractTitleFromFilename(String filename) =>
+      extractTitleFromFilename(filename);
 
   /// Extensions MediaMetadataRetriever cannot reliably decode (WavPack:
   /// never, on any device; DSD: most OEM builds). Rows of these types get a
@@ -3604,7 +3667,13 @@ class LibraryScannerService {
     required int? fileSize,
   }) {
     if (albumArtPath == null || albumArtPath.isEmpty) return false;
-    if (isCustom) return true;
+    if (isCustom || albumArtPath.startsWith('lokal-cover://')) return true;
+    if (existingLastModified == null &&
+        (existingFileSize == null ||
+            fileSize == null ||
+            existingFileSize == fileSize)) {
+      return true;
+    }
     final sameTimestamp = existingLastModified == lastModified;
     final sameSize = fileSize == null || existingFileSize == fileSize;
     return sameTimestamp && sameSize;
@@ -3719,10 +3788,14 @@ class LibraryScannerService {
         ..copyCrc = trackLog?.trackNumber == track.trackNumber
             ? trackLog?.copyCrc
             : null
+        ..remoteId = existing?.remoteId
+        ..remoteServerId = existing?.remoteServerId
+        ..hasLocalEdits = existing?.hasLocalEdits ?? false
         ..metadataComplete = meta?.sampleRate != null && meta?.bitDepth != null;
 
       if (existing != null) {
         entity.id = existing.id;
+        _preserveLocalEdits(entity, existing);
       }
       entities.add(entity);
     }

@@ -560,7 +560,9 @@ class _SummaryCardState extends ConsumerState<_SummaryCard> {
                     Text(
                       _collapsed
                           ? l10n.groupsToRemove2(result.totalGroups, toRemove)
-                          : l10n.onlyLibraryEntriesAreRemovedYour,
+                          : lokalText(
+                              'Duplicate files are deleted from storage while likes, playlists, and play counts are merged into the kept copy.',
+                            ),
                       style: TextStyle(
                         fontFamily: LokalTheme.sans,
                         fontSize: 12,
@@ -868,7 +870,16 @@ class _BottomActionBar extends ConsumerWidget {
     final confirmed = await _confirm(
       context,
       title: l10n.removeDuplicates2(toRemove),
-      message: l10n.weLlKeepYourCheckedVersion(kept, toRemove),
+      message: lokalText(
+        'We’ll keep your {kept} checked {keptLabel}, merge likes, playlists, and play counts into {keptTarget}, and delete the other {removed} duplicate {removedLabel} from device storage.',
+        args: {
+          'kept': kept,
+          'keptLabel': kept == 1 ? 'version' : 'versions',
+          'keptTarget': kept == 1 ? 'it' : 'them',
+          'removed': toRemove,
+          'removedLabel': toRemove == 1 ? 'file' : 'files',
+        },
+      ),
       confirmLabel: l10n.remove,
       destructive: true,
     );
@@ -907,7 +918,13 @@ class _BottomActionBar extends ConsumerWidget {
     final confirmed = await _confirm(
       context,
       title: l10n.removeAllWithBestPicks,
-      message: l10n.weLlKeepTheBestQuality(toRemove),
+      message: lokalText(
+        'We’ll keep the highest-quality copy in each group, merge likes, playlists, and play counts into it, and delete {removed} duplicate {removedLabel} from device storage.',
+        args: {
+          'removed': toRemove,
+          'removedLabel': toRemove == 1 ? 'file' : 'files',
+        },
+      ),
       confirmLabel: l10n.removeAll,
       destructive: true,
     );
