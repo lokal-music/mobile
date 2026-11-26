@@ -759,7 +759,7 @@ class _BottomActionBar extends ConsumerWidget {
         AppConstants.spacingMd,
         AppConstants.spacingMd,
         AppConstants.spacingMd,
-        MediaQuery.paddingOf(context).bottom + AppConstants.spacingMd,
+        MediaQuery.viewPaddingOf(context).bottom + AppConstants.spacingMd,
       ),
       decoration: BoxDecoration(
         color: context.lokal.surface.withValues(alpha: 0.86),
