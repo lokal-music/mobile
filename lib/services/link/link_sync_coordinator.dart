@@ -4,6 +4,7 @@ import '../../models/song.dart';
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:isar_community/isar.dart';
@@ -26,6 +27,7 @@ import 'link_playlist_order.dart';
 import 'link_profile_service.dart';
 import 'lokal_desktop_source.dart';
 import 'lokal_link_service.dart';
+import 'link_content_server.dart';
 import 'transfer_artifact_cleaner.dart';
 
 /// Symmetric, cursor-based merge. Only explicit operations remove playlist items;
@@ -459,6 +461,7 @@ class LinkSyncCoordinator {
       // Do not make a successful full sync wait for optional image uploads.
       unawaited(source.uploadRecentHistoryArtwork(credentials, maxCovers: 8));
     }
+    if (!_background) await _publishMobileCatalog();
     _requireReady();
     _report(LinkSyncPhase.finalizing);
     if (!_background) {
@@ -466,6 +469,64 @@ class LinkSyncCoordinator {
       onProfileChanged?.call();
     }
     if (changed || !_background) MilestoneService.changes.add(null);
+  }
+
+  Future<void> _publishMobileCatalog() async {
+    _requireReady();
+    final deviceId = await LinkJournal.instance.deviceId();
+    final songs = await SongRepository().getAllSongs();
+    final snapshot = linkUuid();
+    socket.send('catalog.begin', {
+      'device_id': deviceId,
+      'snapshot_id': snapshot,
+    });
+    var page = <Map<String, dynamic>>[];
+    var sent = 0;
+    for (final song in songs) {
+      _requireReady();
+      final path = song.filePath;
+      if (path == null || path.isEmpty || path.startsWith('ghost://')) continue;
+      if (!await File(path).exists()) continue;
+      final streamUrl = await LinkContentServer.instance.urlFor(path);
+      page.add({
+        'song_id': song.id,
+        'title': song.title,
+        'artist': song.artist,
+        'album': song.album,
+        'album_artist': song.albumArtist,
+        'duration': song.duration.inMilliseconds / 1000,
+        'file_type': song.fileType,
+        'sample_rate': song.sampleRate,
+        'bit_depth': song.bitDepth,
+        'year': song.year,
+        'track_num': song.trackNumber,
+        'disc_num': song.discNumber,
+        'genre': song.genre,
+        'stream_url': streamUrl,
+      });
+      if (page.length >= 50) {
+        await socket.request('catalog.push', {
+          'device_id': deviceId,
+          'snapshot_id': snapshot,
+          'tracks': page,
+        });
+        sent += page.length;
+        page = <Map<String, dynamic>>[];
+      }
+    }
+    if (page.isNotEmpty) {
+      await socket.request('catalog.push', {
+        'device_id': deviceId,
+        'snapshot_id': snapshot,
+        'tracks': page,
+      });
+      sent += page.length;
+    }
+    await socket.request('catalog.end', {
+      'device_id': deviceId,
+      'snapshot_id': snapshot,
+      'count': sent,
+    });
   }
 
   /// Repair history which was received before its PC songs were in the
