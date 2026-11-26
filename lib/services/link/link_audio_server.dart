@@ -17,7 +17,8 @@ class LinkAudioServer {
 
   Future<String> publish(String path) async {
     final file = File(path);
-    if (!await file.exists()) throw StateError('The phone audio file is unavailable.');
+    if (!await file.exists())
+      throw StateError('The phone audio file is unavailable.');
     final ip = await _lanAddress();
     await NetworkLocalAccess.ensure(Uri(scheme: 'http', host: ip));
     final server = await _ensureServer();
@@ -123,7 +124,10 @@ class LinkAudioServer {
         end = last.isEmpty ? total - 1 : (int.tryParse(last) ?? -1);
         if (start >= total || end < start) {
           request.response.statusCode = HttpStatus.requestedRangeNotSatisfiable;
-          request.response.headers.set(HttpHeaders.contentRangeHeader, 'bytes */$total');
+          request.response.headers.set(
+            HttpHeaders.contentRangeHeader,
+            'bytes */$total',
+          );
           await request.response.close();
           return;
         }
