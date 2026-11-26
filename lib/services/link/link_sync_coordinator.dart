@@ -487,8 +487,14 @@ class LinkSyncCoordinator {
       final path = song.filePath;
       if (song.title.trim().isEmpty || song.duration.inMilliseconds <= 0) continue;
       if (path == null || path.isEmpty || path.startsWith('ghost://')) continue;
-      if (!await File(path).exists()) continue;
-      final streamUrl = await LinkContentServer.instance.urlFor(path);
+      late final String streamUrl;
+      try {
+        streamUrl = await LinkContentServer.instance.urlFor(path);
+      } on StateError {
+        continue;
+      } on FileSystemException {
+        continue;
+      }
       page.add({
         'song_id': song.id,
         'title': song.title,
