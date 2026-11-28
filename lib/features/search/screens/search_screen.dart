@@ -32,7 +32,6 @@ import 'package:flick/features/search/providers/search_filter_provider.dart';
 import 'package:flick/features/search/widgets/online_search_section.dart';
 import 'package:flick/features/search/widgets/search_filter_chips.dart';
 import 'package:flick/features/konnekted/library/lokal_albums_artists.dart';
-import 'package:flick/features/konnekted/library/lokal_genres.dart';
 import 'package:flick/features/konnekted/library/lokal_library_kit.dart';
 import 'package:flick/features/konnekted/library/lokal_navigation.dart';
 import 'package:flick/l10n/l10n.dart';
@@ -369,52 +368,8 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   }
 
   Widget _buildEmptyState(BuildContext context) {
-    // Idle Search is a browsing destination, not an empty dead end.
-    // The preview stays deliberately short; all categories remain available
-    // on the dedicated Library > Genres destination.
-    final summary = ref.watch(lokalGenreSummaryProvider).value;
-    final scope = ref.watch(searchScopeProvider);
-    final previewGenres =
-        summary?.genres.take(6).toList() ?? const <LokalGenre>[];
-    final previewUnclassified = previewGenres.length < 6
-        ? (summary?.noGenre ?? const <Song>[])
-        : const <Song>[];
-    final browseGenres = scope != SearchScope.online &&
-        (previewGenres.isNotEmpty || previewUnclassified.isNotEmpty);
-    final genreSlivers = <Widget>[
-      if (browseGenres)
-        SliverToBoxAdapter(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 16, 16, 14),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    lokalText('Browse by genre'),
-                    style: const TextStyle(
-                      fontSize: 23,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: -.5,
-                    ),
-                  ),
-                ),
-                TextButton(
-                  onPressed: () => pushLokal(context, const LokalGenresPage()),
-                  child: Text(lokalText('See all')),
-                ),
-              ],
-            ),
-          ),
-        ),
-      if (browseGenres)
-        LokalGenreGrid(
-          genres: previewGenres,
-          noGenreSongs: previewUnclassified,
-        ),
-    ];
     if (ref.watch(recentSearchTracksProvider).isNotEmpty) {
       return RecentSearchGrid(
-        headerSlivers: genreSlivers,
         onSelected: (track) {
           final song = (ref.read(songsProvider).value?.songs ?? const <Song>[])
               .where((song) => song.id == track.songId)
@@ -426,14 +381,6 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
             _onSearchChanged(track.title);
           }
         },
-      );
-    }
-    if (browseGenres) {
-      return CustomScrollView(
-        slivers: [
-          ...genreSlivers,
-          const SliverToBoxAdapter(child: SizedBox(height: 160)),
-        ],
       );
     }
     return Center(
